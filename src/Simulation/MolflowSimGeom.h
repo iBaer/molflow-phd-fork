@@ -37,6 +37,8 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include "RayTracing/KDTree.h"
 #include <map>
 
+#include <GLApp/GLParser.h>
+#include <Formulas.h>
 
 struct SimulationFacet;
 class GlobalSimuState;

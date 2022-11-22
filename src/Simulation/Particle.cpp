@@ -308,7 +308,7 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
         for (i = 0; i < nbStep && !allQuit; i++) {
             if (insertNewParticle) {
                 // quit on desorp error or limit reached
-                if((model->otfParams.desorptionLimit > 0 && remainingDes==0) || !StartFromSource(particle)){
+                if((/*model->otfParams.desorptionLimit > 0 && */remainingDes==0) || !StartFromSource(particle)){
                     returnVal = false; // desorp limit reached
                     break;
                 }
@@ -716,7 +716,8 @@ bool Particle::StartFromSource(Ray& ray) {
     for(auto& fac : model->facets) { //Go through facets in a structure
         auto f = std::dynamic_pointer_cast<MolflowSimFacet>(fac);
         if (f->sh.desorbType != DES_NONE) { //there is some kind of outgassing
-            if (f->sh.useOutgassingFile) { //Using SynRad-generated outgassing map
+            if (f->sh.useOutgassingFile) {
+                //Using SynRad-generated outgassing map
                 if (f->sh.totalOutgassing > 0.0) {
                     found = (srcRnd >= sumA) && (srcRnd < (sumA + model->wp.latestMoment * f->sh.totalOutgassing /
                                                                   (1.38E-23 * f->sh.temperature)));
