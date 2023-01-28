@@ -241,9 +241,9 @@ int Poly2TriConverter::PolygonsToTriangles(flowgpu::PolygonMesh *polygonMesh, fl
                     /*std::cout << "[WARNING] Triangle with same vertices was created! PolyIndex: "<< facetIndex <<std::endl;
                     std::cout << "[WARNING] Vertices: "<< tri.x << " , " << tri.y << " , " << tri.z << std::endl;
                     throw std::logic_error("Malformed triangle created!");*/
-                    Log::console_msg(1, "[WARNING] Triangle with same vertices could have been created! PolyIndex: {}\n", facetIndex);
-                    Log::console_msg(1, "[WARNING] Vertices: {} , {} , {}\n", (*triIt).x, (*triIt).y, (*triIt).z);
-                    Log::console_msg(1, "[WARNING] Skipping triangle! Could lead to unwanted results!\n");
+                    Log::console_msg(5, "[WARNING] Triangle with same vertices could have been created! PolyIndex: {}\n", facetIndex);
+                    Log::console_msg(5, "[WARNING] Vertices: {} , {} , {}\n", (*triIt).x, (*triIt).y, (*triIt).z);
+                    Log::console_msg(5, "[WARNING] Skipping triangle! Could lead to unwanted results!\n");
                     triIt = triangleIndices.erase(triIt);
                     continue;
                     //throw std::logic_error("Malformed triangle created!");

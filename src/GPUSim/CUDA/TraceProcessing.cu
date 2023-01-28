@@ -957,6 +957,11 @@ namespace flowgpu {
 #endif
 
                 {
+#ifdef BOUND_CHECK
+                    if(prd->hitFacetId >= optixLaunchParams.simConstants.nbFacets){
+                        printf("[RecursiveReflection] facIndex %u >= %u is out of bounds (%u)\n", prd->hitFacetId, optixLaunchParams.simConstants.nbFacets, prd->inSystem);
+                    }
+#endif
                     apply_offset(poly, *prd, optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].hitPos);
                     if(poly.facProps.endangered_neighbor) { // with offset to center
                         optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].hitPos = offset_to_center(prd->hitPos, prd->hitFacetId, poly);

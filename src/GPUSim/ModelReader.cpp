@@ -34,6 +34,7 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include "NeighborScan.h"
 #include "Helper/MathTools.h"
 #include "../Simulation/MolflowSimFacet.h"
+#include "Helper/Chronometer.h"
 
 #include <cereal/archives/binary.hpp>
 #include <cereal/archives/xml.hpp>
@@ -87,7 +88,10 @@ namespace flowgpu {
     // split a 2sided facet into two 1sided (e.g. in case of culling)
     void split2sided(flowgpu::TriangleMesh *triMesh) {
         int facetIndex = 0;
-        for (auto &facet: triMesh->poly) {
+        const int initial_size = triMesh->poly.size();
+        for (int fid = 0; fid < initial_size; fid++) {
+            auto &facet = triMesh->poly[fid];
+            //for (auto &facet: triMesh->poly) {
             if (facet.facProps.is2sided) {
                 auto poly_cpy = facet;
                 // Calculate triangle area
@@ -216,12 +220,12 @@ namespace flowgpu {
             //facet.center += facet.N * 1e-2f;
 
             Log::console_msg(5, "Facet {}({}) with center {} , {} , {} and N = {} , {} , {}\n",
-                       facetIndex, facet.parentIndex, facet.center.x, facet.center.y, facet.center.z,
-                       facet.N.x, facet.N.y, facet.N.z);
+                             facetIndex, facet.parentIndex, facet.center.x, facet.center.y, facet.center.z,
+                             facet.N.x, facet.N.y, facet.N.z);
             Log::console_msg(5, "     {} , {} , {} -- {} , {} , {} -- {} , {} , {}\n",
-                       a.x, a.y, a.z,
-                       b.x, b.y, b.z,
-                       c.x, c.y, c.z
+                             a.x, a.y, a.z,
+                             b.x, b.y, b.z,
+                             c.x, c.y, c.z
             );
             ++facetIndex;
         }
@@ -348,22 +352,33 @@ namespace flowgpu {
 
 #ifdef WITHTRIANGLES
         // Now create Triangle Mesh
-        flowgpu::TriangleMesh *triMesh = new flowgpu::TriangleMesh();
-        try {
-            Poly2TriConverter::PolygonsToTriangles(polyMesh, triMesh);
-        }
-        catch (std::exception &e) {
-            std::cerr << e.what() << std::endl;
-            return -1;
-        }
-        triMesh->vertices3d = polyMesh->vertices3d;
-        triMesh->nbVertices = triMesh->poly.size() * 3;
-        triMesh->nbFacets = triMesh->poly.size();
+        {
+            auto *triMesh = new flowgpu::TriangleMesh();
+            try {
+                Poly2TriConverter::PolygonsToTriangles(polyMesh, triMesh);
+            }
+            catch (std::exception &e) {
+                std::cerr << e.what() << std::endl;
+                return -1;
+            }
+            triMesh->vertices3d = polyMesh->vertices3d;
+            triMesh->nbVertices = triMesh->poly.size() * 3;
+            triMesh->nbFacets = triMesh->poly.size();
 
-        //triMesh->cdfs_1.push_back(0);
+            //triMesh->cdfs_1.push_back(0);
 
-        split2sided(triMesh);
-        model->triangle_meshes.push_back(triMesh);
+            split2sided(triMesh);
+
+
+            CalculateTriangleCenter(triMesh);
+            //--- Calculate outgassing values in relation to (tri_area / poly_area)
+            CalculateRelativeTriangleOutgassing(facets, triMesh);
+
+            model->triangle_meshes.push_back(triMesh);
+        }
+
+#else
+        CalculateRelativePolygonOutgassing(facets, polyMesh);
 #endif
 
         if (!polyMesh->poly.empty()) {
@@ -372,9 +387,9 @@ namespace flowgpu {
         } else {
             delete polyMesh;
         }
-        for (auto &polyMesh: model->poly_meshes) {
-            model->nbFacets_total += polyMesh->nbFacets;
-            model->nbVertices_total += polyMesh->nbVertices;
+        for (auto &pm: model->poly_meshes) {
+            model->nbFacets_total += pm->nbFacets;
+            model->nbVertices_total += pm->nbVertices;
         }
         for (auto &triMesh: model->triangle_meshes) {
             model->nbFacets_total += triMesh->nbFacets;
@@ -389,13 +404,6 @@ namespace flowgpu {
             model->tri_facetOffset.emplace_back(hitOffset);
         }
 
-#ifdef WITHTRIANGLES
-        CalculateTriangleCenter(triMesh);
-        //--- Calculate outgassing values in relation to (tri_area / poly_area)
-        CalculateRelativeTriangleOutgassing(facets, triMesh);
-#else
-        CalculateRelativePolygonOutgassing(facets, polyMesh);
-#endif
         for (auto &mesh: model->poly_meshes) {
             std::vector<flowgpu::FacetType> sbtIndices; // Facet Type
             for (auto &polygon: mesh->poly) {
@@ -409,12 +417,15 @@ namespace flowgpu {
             }
             mesh->sbtIndices = sbtIndices;
         }
+
+        size_t n_transparent = 0;
         for (auto &mesh: model->triangle_meshes) {
             std::vector<flowgpu::FacetType> sbtIndices; // Facet Type
+            sbtIndices.reserve(mesh->poly.size());
             for (auto &triangle: mesh->poly) {
                 //if(triangle.facProps.is2sided && triangle.facProps.opacity == 0.0f){
                 if (triangle.facProps.opacity == 0.0f) {
-                    std::cout << sbtIndices.size() << " > is transparent " << std::endl;
+                    n_transparent++;//std::cout << sbtIndices.size() << " > is transparent " << std::endl;
                     sbtIndices.emplace_back(FacetType::FACET_TYPE_TRANS);
                 } else {
                     sbtIndices.emplace_back(FacetType::FACET_TYPE_SOLID);
@@ -423,353 +434,248 @@ namespace flowgpu {
             mesh->sbtIndices = sbtIndices;
         }
 
+        if (n_transparent)
+            Log::console_msg(4, "Model has {} transparent facets.\n");
         // Textures
         if (!model->textures.empty()) {
             std::cout << "[WARNING] Textures would get added to non-empty vector!" << std::endl;
             return 1;
-        } else {
-            int textureOffset = 0;
-            int texelOffset = 0;
-            for (int facetInd = 0; facetInd < facets.size(); ++facetInd) {
-                auto &facet = facets[facetInd];
-                if (facet.facetProperties.isTextured) {
+        }
 
-                    std::vector<Texel> texture;
-                    std::vector<float> texInc;
-                    FacetTexture facetTex; // TODO: Map Offset to Triangle
-                    if (!InitializeTexture(facet, texture, facetTex, texInc)) {
-                        printf("[ERROR] Initializing facetTex #%d\n", facetInd);
-                        exit(0);
-                    }
+        int textureOffset = 0;
+        int texelOffset = 0;
+        for (int facetInd = 0; facetInd < facets.size(); ++facetInd) {
+            auto &facet = facets[facetInd];
+            if (facet.facetProperties.isTextured) {
 
-                    facetTex.bbMin = make_float3(std::numeric_limits<float>::max());
-                    facetTex.bbMax = make_float3(std::numeric_limits<float>::lowest());
+                std::vector<Texel> texture;
+                std::vector<float> texInc;
+                FacetTexture facetTex; // TODO: Map Offset to Triangle
+                if (!InitializeTexture(facet, texture, facetTex, texInc)) {
+                    printf("[ERROR] Initializing facetTex #%d\n", facetInd);
+                    exit(0);
+                }
 
-                    for (auto &ind: facet.indices) {
-                        facetTex.bbMin = fminf(facetTex.bbMin, vertices3d[ind]);
-                        facetTex.bbMax = fmaxf(facetTex.bbMax, vertices3d[ind]);
-                    }
+                facetTex.bbMin = make_float3(std::numeric_limits<float>::max());
+                facetTex.bbMax = make_float3(std::numeric_limits<float>::lowest());
 
-                    std::cout << "Texture BBox: " << facetTex.bbMin.x << " , " << facetTex.bbMin.y << " , "
-                              << facetTex.bbMin.z << " | " <<
-                              facetTex.bbMax.x << " , " << facetTex.bbMax.y << " , " << facetTex.bbMax.z << std::endl;
+                for (auto &ind: facet.indices) {
+                    facetTex.bbMin = fminf(facetTex.bbMin, vertices3d[ind]);
+                    facetTex.bbMax = fmaxf(facetTex.bbMax, vertices3d[ind]);
+                }
 
-
-                    facetTex.texelOffset = texelOffset;
-                    texelOffset += texture.size();
-
-                    model->textures.insert(std::end(model->textures), std::begin(texture), std::end(texture));
-                    model->texInc.insert(std::end(model->texInc), std::begin(texInc), std::end(texInc));
-                    model->facetTex.push_back(facetTex);
-
-                    for (auto &polyMesh: model->poly_meshes) {
-                        for (auto &polygon: polyMesh->poly) {
-                            if (polygon.parentIndex == facetInd) {
-                                polygon.texProps.textureOffset = textureOffset;
-                                polygon.texProps.textureSize = texture.size();
-                                if (facet.facetProperties.countAbs)
-                                    polygon.texProps.textureFlags |= TEXTURE_FLAGS::countAbs;
-                                if (facet.facetProperties.countRefl)
-                                    polygon.texProps.textureFlags |= TEXTURE_FLAGS::countRefl;
-                                if (facet.facetProperties.countTrans)
-                                    polygon.texProps.textureFlags |= TEXTURE_FLAGS::countTrans;
-                                if (facet.facetProperties.countDirection)
-                                    polygon.texProps.textureFlags |= TEXTURE_FLAGS::countDirection;
-                                if (facet.facetProperties.countDes)
-                                    polygon.texProps.textureFlags |= TEXTURE_FLAGS::countDes;
-                            }
-                        }
-                    }
-                    for (auto &triMesh: model->triangle_meshes) {
-                        uint32_t triInd = 0;
-                        for (auto &triangle: triMesh->poly) {
-                            if (triangle.parentIndex == facetInd) {
-                                triangle.texProps.textureOffset = textureOffset;
-                                triangle.texProps.textureSize = texture.size();
-                                if (facet.facetProperties.countAbs)
-                                    triangle.texProps.textureFlags |= TEXTURE_FLAGS::countAbs;
-                                if (facet.facetProperties.countRefl)
-                                    triangle.texProps.textureFlags |= TEXTURE_FLAGS::countRefl;
-                                if (facet.facetProperties.countTrans)
-                                    triangle.texProps.textureFlags |= TEXTURE_FLAGS::countTrans;
-                                if (facet.facetProperties.countDirection)
-                                    triangle.texProps.textureFlags |= TEXTURE_FLAGS::countDirection;
-                                if (facet.facetProperties.countDes)
-                                    triangle.texProps.textureFlags |= TEXTURE_FLAGS::countDes;
-
-                                if (triangle.texProps.textureFlags != noTexture) {
-                                    // TODO: Map Texcoords
-
-                                    /*std::cout << triangle.parentIndex << " | " << triInd << " => ";
-                                    std::cout << " Origin " << triangle.O.x << " , " << triangle.O.y << " , " << triangle.O.z << " => ";
-                                    std::cout << " U " << triangle.U.x << " , " << triangle.U.y << " , " << triangle.U.z << " => ";
-                                    std::cout << " V " << triangle.V.x << " , " << triangle.V.y << " , " << triangle.V.z << " => ";
-                                    //facetTex. = destination->sh.O + u * destination->sh.U + v * destination->sh.V;
-                                    float3 c1 = (triMesh->vertices3d[triMesh->indices[triInd].x] - facetTex.bbMin) / (facetTex.bbMax-facetTex.bbMin);
-                                    float3 c2 = (triMesh->vertices3d[triMesh->indices[triInd].y] - facetTex.bbMin) / (facetTex.bbMax-facetTex.bbMin);
-                                    float3 c3 = (triMesh->vertices3d[triMesh->indices[triInd].z] - facetTex.bbMin) / (facetTex.bbMax-facetTex.bbMin);
-
-                                    std::cout << c1.x << " , " << c1.y << " , " << c1.z << " | ";
-                                    std::cout << c2.x << " , " << c2.y << " , " << c2.z << " | ";
-                                    std::cout << c3.x << " , " << c3.y << " , " << c3.z << " | ";
-                                    std::cout << "---" << std::endl;*/
-                                }
-
-                            }
-
-                            triInd++;
-                        }
-                    }
-                    textureOffset += 1;
-                } // one more texture
-
-                // tex coords for all triangles
-                {
-
-                    for (auto &triMesh: model->triangle_meshes) {
-                        uint32_t triInd = 0;
-                        for (auto &triangle: triMesh->poly) {
-                            if (triangle.parentIndex == facetInd) {
-                                // TODO: Map Texcoords
-
-                                /*std::cout << triangle.parentIndex << " | " << triInd << " => ";
-                                std::cout << " Origin " << triangle.O.x << " , " << triangle.O.y << " , "
-                                          << triangle.O.z << " => ";
-                                std::cout << " U " << triangle.U.x << " , " << triangle.U.y << " , " << triangle.U.z
-                                          << " => ";
-                                std::cout << " V " << triangle.V.x << " , " << triangle.V.y << " , " << triangle.V.z
-                                          << " => ";*/
-                                //facetTex. = destination->sh.O + u * destination->sh.U + v * destination->sh.V;
-                                /*float3 c1 = (triMesh->vertices3d[triMesh->indices[triInd].x] - facetTex.bbMin) /
-                                            (facetTex.bbMax - facetTex.bbMin);
-                                float3 c2 = (triMesh->vertices3d[triMesh->indices[triInd].y] - facetTex.bbMin) /
-                                            (facetTex.bbMax - facetTex.bbMin);
-                                float3 c3 = (triMesh->vertices3d[triMesh->indices[triInd].z] - facetTex.bbMin) /
-                                            (facetTex.bbMax - facetTex.bbMin);*/
-                                //float3 c4 = (triMesh->vertices3d[triMesh->indices[triInd].x] - triangle.O) / (facetTex.bbMax-facetTex.bbMin);
-                                /*double u =  0.0;
-                                double v = 0.0;
-                                if(facet.facetProperties.V.x * facet.facetProperties.U.y != 0.0) {
-                                    double det = facet.facetProperties.U.x * facet.facetProperties.V.y - facet.facetProperties.U.y * facet.facetProperties.V.x; // TODO: Pre calculate
-
-                                    // Vert 1
-                                    double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) - vector3d_to_double3(facet.facetProperties.O);
-                                    double detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
-                                    double detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-
-                                    // Vert 2
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) - vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
-                                    detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-
-                                    // Vert 3
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) - vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
-                                    detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-                                }
-                                else if(facet.facetProperties.V.y * facet.facetProperties.U.z != 0.0) {
-                                    double det = facet.facetProperties.U.y * facet.facetProperties.V.z - facet.facetProperties.U.z * facet.facetProperties.V.y; // TODO: Pre calculate
-
-                                    // Vert 1
-                                    double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) - vector3d_to_double3(facet.facetProperties.O);
-                                    double detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
-                                    double detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-
-                                    // Vert 2
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) - vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
-                                    detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-
-                                    // Vert 3
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) - vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
-                                    detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-                                }
-                                else if(facet.facetProperties.V.z * facet.facetProperties.U.x != 0.0) {
-                                    double det = facet.facetProperties.U.z * facet.facetProperties.V.x - facet.facetProperties.U.x * facet.facetProperties.V.z; // TODO: Pre calculate
-
-                                    // Vert 1
-                                    double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) - vector3d_to_double3(facet.facetProperties.O);
-                                    double detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
-                                    double detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-
-                                    // Vert 2
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) - vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
-                                    detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-
-                                    // Vert 3
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) - vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
-                                    detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(make_float2(static_cast<float>(u),static_cast<float>(v)));
-                                }*/
-
-                                /*
-                                std::cout << "\n";
-                                std::cout << triMesh->vertices3d[triMesh->indices[triInd].x].x << " , " << triMesh->vertices3d[triMesh->indices[triInd].x].y << " , " << triMesh->vertices3d[triMesh->indices[triInd].x].z << " | ";
-                                std::cout << triMesh->vertices3d[triMesh->indices[triInd].y].x << " , " << triMesh->vertices3d[triMesh->indices[triInd].y].y << " , " << triMesh->vertices3d[triMesh->indices[triInd].y].z << " | ";
-                                std::cout << triMesh->vertices3d[triMesh->indices[triInd].z].x << " , " << triMesh->vertices3d[triMesh->indices[triInd].z].y << " , " << triMesh->vertices3d[triMesh->indices[triInd].z].z << " --- ";
-        */
-                                /*std::cout << c1.x << " , " << c1.y << " , " << c1.z << " | ";
-                                std::cout << c2.x << " , " << c2.y << " , " << c2.z << " | ";
-                                std::cout << c3.x << " , " << c3.y << " , " << c3.z << " | ";
-                                std::cout << "---" << std::endl;*/
+                Log::console_msg(42, "Texture BBox: {} , {} , {} | {} , {} , {}\n",
+                                 facetTex.bbMin.x, facetTex.bbMin.y, facetTex.bbMin.z,
+                                 facetTex.bbMax.x, facetTex.bbMax.y, facetTex.bbMax.z);
 
 
+                facetTex.texelOffset = texelOffset;
+                texelOffset += texture.size();
 
-                                // texture coords for all triangles even without textures
-                                double u = 0.0;
-                                double v = 0.0;
-                                if (facet.facetProperties.V.x * facet.facetProperties.U.y != 0.0) {
-                                    double det = facet.facetProperties.U.x * facet.facetProperties.V.y -
-                                                 facet.facetProperties.U.y *
-                                                 facet.facetProperties.V.x; // TODO: Pre calculate
+                model->textures.insert(std::end(model->textures), std::begin(texture), std::end(texture));
+                model->texInc.insert(std::end(model->texInc), std::begin(texInc), std::end(texInc));
+                model->facetTex.push_back(facetTex);
 
-                                    // Vert 1
-                                    double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) -
-                                                vector3d_to_double3(facet.facetProperties.O);
-                                    double detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
-                                    double detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
-
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-
-                                    // Vert 2
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) -
-                                        vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
-                                    detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-
-                                    // Vert 3
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) -
-                                        vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
-                                    detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-                                } else if (facet.facetProperties.V.y * facet.facetProperties.U.z != 0.0) {
-                                    double det = facet.facetProperties.U.y * facet.facetProperties.V.z -
-                                                 facet.facetProperties.U.z *
-                                                 facet.facetProperties.V.y; // TODO: Pre calculate
-
-                                    // Vert 1
-                                    double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) -
-                                                vector3d_to_double3(facet.facetProperties.O);
-                                    double detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
-                                    double detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-
-                                    // Vert 2
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) -
-                                        vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
-                                    detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-
-                                    // Vert 3
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) -
-                                        vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
-                                    detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-                                } else if (facet.facetProperties.V.z * facet.facetProperties.U.x != 0.0) {
-                                    double det = facet.facetProperties.U.z * facet.facetProperties.V.x -
-                                                 facet.facetProperties.U.x *
-                                                 facet.facetProperties.V.z; // TODO: Pre calculate
-
-                                    // Vert 1
-                                    double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) -
-                                                vector3d_to_double3(facet.facetProperties.O);
-                                    double detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
-                                    double detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-
-                                    // Vert 2
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) -
-                                        vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
-                                    detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-
-                                    // Vert 3
-                                    b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) -
-                                        vector3d_to_double3(facet.facetProperties.O);
-                                    detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
-                                    detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
-                                    v = (detV) / (det);
-                                    u = (detU) / det;
-                                    triMesh->texCoords.emplace_back(
-                                            make_float2(static_cast<float>(u), static_cast<float>(v)));
-                                }
-
-                                /*float2 tex = *(triMesh->texCoords.rbegin() + 2);
-                                std::cout << "["<<triMesh->texCoords.size()<<"] " << tex.x << " , " << tex.y << " | ";
-                                tex = *(triMesh->texCoords.rbegin() + 1);
-                                std::cout << tex.x << " , " << tex.y << " | ";
-                                tex = *(triMesh->texCoords.rbegin());
-                                std::cout << tex.x << " , " << tex.y << " | ";
-                                std::cout << "---" << std::endl;*/
-                            }
-                            triInd++;
+                for (auto &polyMesh: model->poly_meshes) {
+                    for (auto &polygon: polyMesh->poly) {
+                        if (polygon.parentIndex == facetInd) {
+                            polygon.texProps.textureOffset = textureOffset;
+                            polygon.texProps.textureSize = texture.size();
+                            if (facet.facetProperties.countAbs)
+                                polygon.texProps.textureFlags |= TEXTURE_FLAGS::countAbs;
+                            if (facet.facetProperties.countRefl)
+                                polygon.texProps.textureFlags |= TEXTURE_FLAGS::countRefl;
+                            if (facet.facetProperties.countTrans)
+                                polygon.texProps.textureFlags |= TEXTURE_FLAGS::countTrans;
+                            if (facet.facetProperties.countDirection)
+                                polygon.texProps.textureFlags |= TEXTURE_FLAGS::countDirection;
+                            if (facet.facetProperties.countDes)
+                                polygon.texProps.textureFlags |= TEXTURE_FLAGS::countDes;
                         }
                     }
                 }
-            }
-#ifdef BOUND_CHECK
-            model->nbTexel_total = texelOffset;
-#endif
+                for (auto &triMesh: model->triangle_meshes) {
+                    uint32_t triInd = 0;
+                    for (auto &triangle: triMesh->poly) {
+                        if (triangle.parentIndex == facetInd) {
+                            triangle.texProps.textureOffset = textureOffset;
+                            triangle.texProps.textureSize = texture.size();
+                            if (facet.facetProperties.countAbs)
+                                triangle.texProps.textureFlags |= TEXTURE_FLAGS::countAbs;
+                            if (facet.facetProperties.countRefl)
+                                triangle.texProps.textureFlags |= TEXTURE_FLAGS::countRefl;
+                            if (facet.facetProperties.countTrans)
+                                triangle.texProps.textureFlags |= TEXTURE_FLAGS::countTrans;
+                            if (facet.facetProperties.countDirection)
+                                triangle.texProps.textureFlags |= TEXTURE_FLAGS::countDirection;
+                            if (facet.facetProperties.countDes)
+                                triangle.texProps.textureFlags |= TEXTURE_FLAGS::countDes;
+
+                            if (triangle.texProps.textureFlags != noTexture) {
+                                // TODO: Map Texcoords
+
+                                /*std::cout << triangle.parentIndex << " | " << triInd << " => ";
+                                std::cout << " Origin " << triangle.O.x << " , " << triangle.O.y << " , " << triangle.O.z << " => ";
+                                std::cout << " U " << triangle.U.x << " , " << triangle.U.y << " , " << triangle.U.z << " => ";
+                                std::cout << " V " << triangle.V.x << " , " << triangle.V.y << " , " << triangle.V.z << " => ";
+                                //facetTex. = destination->sh.O + u * destination->sh.U + v * destination->sh.V;
+                                float3 c1 = (triMesh->vertices3d[triMesh->indices[triInd].x] - facetTex.bbMin) / (facetTex.bbMax-facetTex.bbMin);
+                                float3 c2 = (triMesh->vertices3d[triMesh->indices[triInd].y] - facetTex.bbMin) / (facetTex.bbMax-facetTex.bbMin);
+                                float3 c3 = (triMesh->vertices3d[triMesh->indices[triInd].z] - facetTex.bbMin) / (facetTex.bbMax-facetTex.bbMin);
+
+                                std::cout << c1.x << " , " << c1.y << " , " << c1.z << " | ";
+                                std::cout << c2.x << " , " << c2.y << " , " << c2.z << " | ";
+                                std::cout << c3.x << " , " << c3.y << " , " << c3.z << " | ";
+                                std::cout << "---" << std::endl;*/
+                            }
+
+                        }
+
+                        triInd++;
+                    }
+                }
+                textureOffset += 1;
+            } // one more texture
         }
 
+        Log::console_msg(2, "Preparing texture coords for all triangles\n");
+        // tex coords for all triangles
+        {
+
+            for (auto &triMesh: model->triangle_meshes) {
+                triMesh->texCoords.reserve(textureOffset);
+
+
+                for (int facetInd = 0; facetInd < facets.size(); ++facetInd) {
+                    auto &facet = facets[facetInd];
+                    uint32_t triInd = 0;
+                    for (auto &triangle: triMesh->poly) {
+                        if (triangle.parentIndex == facetInd) {
+                            // TODO: Map Texcoords
+
+                            // texture coords for all triangles even without textures
+                            double u = 0.0;
+                            double v = 0.0;
+                            if (facet.facetProperties.V.x * facet.facetProperties.U.y != 0.0) {
+                                double det = facet.facetProperties.U.x * facet.facetProperties.V.y -
+                                             facet.facetProperties.U.y *
+                                             facet.facetProperties.V.x; // TODO: Pre calculate
+
+                                // Vert 1
+                                double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) -
+                                            vector3d_to_double3(facet.facetProperties.O);
+                                double detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
+                                double detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
+
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+
+                                // Vert 2
+                                b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) -
+                                    vector3d_to_double3(facet.facetProperties.O);
+                                detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
+                                detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+
+                                // Vert 3
+                                b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) -
+                                    vector3d_to_double3(facet.facetProperties.O);
+                                detU = b.x * facet.facetProperties.V.y - b.y * facet.facetProperties.V.x;
+                                detV = facet.facetProperties.U.x * b.y - facet.facetProperties.U.y * b.x;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+                            } else if (facet.facetProperties.V.y * facet.facetProperties.U.z != 0.0) {
+                                double det = facet.facetProperties.U.y * facet.facetProperties.V.z -
+                                             facet.facetProperties.U.z *
+                                             facet.facetProperties.V.y; // TODO: Pre calculate
+
+                                // Vert 1
+                                double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) -
+                                            vector3d_to_double3(facet.facetProperties.O);
+                                double detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
+                                double detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+
+                                // Vert 2
+                                b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) -
+                                    vector3d_to_double3(facet.facetProperties.O);
+                                detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
+                                detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+
+                                // Vert 3
+                                b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) -
+                                    vector3d_to_double3(facet.facetProperties.O);
+                                detU = b.y * facet.facetProperties.V.z - b.z * facet.facetProperties.V.y;
+                                detV = facet.facetProperties.U.y * b.z - facet.facetProperties.U.z * b.y;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+                            } else if (facet.facetProperties.V.z * facet.facetProperties.U.x != 0.0) {
+                                double det = facet.facetProperties.U.z * facet.facetProperties.V.x -
+                                             facet.facetProperties.U.x *
+                                             facet.facetProperties.V.z; // TODO: Pre calculate
+
+                                // Vert 1
+                                double3 b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].x]) -
+                                            vector3d_to_double3(facet.facetProperties.O);
+                                double detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
+                                double detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+
+                                // Vert 2
+                                b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].y]) -
+                                    vector3d_to_double3(facet.facetProperties.O);
+                                detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
+                                detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+
+                                // Vert 3
+                                b = make_double3(triMesh->vertices3d[triMesh->indices[triInd].z]) -
+                                    vector3d_to_double3(facet.facetProperties.O);
+                                detU = b.z * facet.facetProperties.V.x - b.x * facet.facetProperties.V.z;
+                                detV = facet.facetProperties.U.z * b.x - facet.facetProperties.U.x * b.z;
+                                v = (detV) / (det);
+                                u = (detU) / det;
+                                triMesh->texCoords.emplace_back(
+                                        make_float2(static_cast<float>(u), static_cast<float>(v)));
+                            }
+
+                            //TODO: Check if legit
+                            break;
+                        }
+
+                        triInd++;
+                    }
+                }
+            }
+        }
+
+#ifdef BOUND_CHECK
+        model->nbTexel_total = texelOffset;
+#endif
+
+        Log::console_msg(2, "Preparing profiles for all triangles\n");
         // Profiles
         if (!model->profiles.empty()) {
             std::cout << "[WARNING] Profiles would get added to non-empty vector!" << std::endl;
@@ -873,16 +779,18 @@ namespace flowgpu {
         for (std::vector<Vector3d>::iterator it = vertices3d.begin(); it != vertices3d.end(); it++)
             vertices3f.emplace_back(make_float3(it->x, it->y, it->z));
         vertices3d.clear();
+
+        Log::console_msg(3, "#ModelReader: Parsing geometry\n");
         if (parseGeomFromSerialization(model, facets, vertices3f)) {
             delete model;
             model = nullptr;
             return model;
         }
-        std::cout << "#ModelReader: Gas mass: " << model->wp.gasMass << std::endl;
-        std::cout << "#ModelReader: Maxwell: " << model->wp.useMaxwellDistribution << std::endl;
-        std::cout << "#ModelReader: Name: " << model->geomProperties.name << std::endl;
-        std::cout << "#ModelReader: #Vertex: " << vertices3d.size() << std::endl;
-        std::cout << "#ModelReader: #Facets: " << model->geomProperties.nbFacet << std::endl;
+        Log::console_msg(3, "#ModelReader: Gas mass: {}\n", model->wp.gasMass);
+        Log::console_msg(3, "#ModelReader: Maxwell: {}\n", model->wp.useMaxwellDistribution);
+        Log::console_msg(3, "#ModelReader: Name: {}\n", model->geomProperties.name);
+        Log::console_msg(3, "#ModelReader: #Vertex: {}\n", vertices3d.size());
+        Log::console_msg(3, "#ModelReader: #Facets: {}\n", model->geomProperties.nbFacet);
         size_t nbTexelCount = 0;
         for (int facInd = 0; facInd < facets.size(); ++facInd) {
             if ((facets[facInd].texelInc.empty() && facets[facInd].facetProperties.isTextured) ||
@@ -891,8 +799,7 @@ namespace flowgpu {
                 exit(0);
             }
             if (facets[facInd].facetProperties.isTextured) {
-                std::cout << "#ModelReader: Facet#" << facInd << " #Texels: " << facets[facInd].texelInc.size()
-                          << std::endl;
+                Log::console_msg(5, "#ModelReader: Facet# {}  #Texels: {}\n", facInd, facets[facInd].texelInc.size());
                 nbTexelCount += facets[facInd].texelInc.size();
             }
         }
@@ -940,6 +847,10 @@ namespace flowgpu {
     int
     loadFromSimModel(std::shared_ptr<Model> &model, std::shared_ptr<flowgpu::MolflowGPUSettings> &settings,
                      const SimulationModel &simModel) {
+
+        Chronometer timer;
+        timer.Start();
+
         model = std::make_shared<flowgpu::Model>();
 
         if (!settings)
@@ -975,56 +886,58 @@ namespace flowgpu {
             tmp.outgassingMap = mf_fac->ogMap.outgassingMap;
         }
 
-        std::cout << "#ModelReader: Gas mass: " << settings->gasMass << std::endl;
-        std::cout << "#ModelReader: Maxwell: " << settings->useMaxwellDistribution << std::endl;
-        std::cout << "#ModelReader: Name: " << model->geomProperties.name << std::endl;
-        std::cout << "#ModelReader: #Vertex: " << vertices3d.size() << std::endl;
-        std::cout << "#ModelReader: #Indices: " << countInd << std::endl;
-        std::cout << "#ModelReader: #Facets: " << model->geomProperties.nbFacet << std::endl;
+        Log::console_msg(3, "#ModelReader: Gas mass: {}\n", settings->gasMass);
+        Log::console_msg(3, "#ModelReader: Maxwell: {}\n", settings->useMaxwellDistribution);
+        Log::console_msg(3, "#ModelReader: Name: {}\n", model->geomProperties.name);
+        Log::console_msg(3, "#ModelReader: #Vertex: {}\n", vertices3d.size());
+        Log::console_msg(3, "#ModelReader: #Indices: {}\n", countInd);
+        Log::console_msg(3, "#ModelReader: #Facets: {}\n", model->geomProperties.nbFacet);
+
         for (int facInd = 0; facInd < facets.size(); ++facInd) {
             if (!facets[facInd].texelInc.empty())
-                std::cout << "#ModelReader: Facet#" << facInd << " #Texels: " << facets[facInd].texelInc.size()
-                          << std::endl;
+                Log::console_msg(5, "#ModelReader: Facet# {}  #Texels: {}\n", facInd, facets[facInd].texelInc.size());
         }
 
+        timer.ReInit(); timer.Start();
+        Log::console_header(3, "#ModelReader: Parsing geometry\n");
         parseGeomFromSerialization(model.get(), facets, vertices3d);
+        Log::console_footer(3, "#ModelReader: Done parsing geometry {}s\n", timer.Elapsed());
 
         std::vector<CommonEdge> edges;
-
         std::vector<Facet *> facet_ptr;
         facet_ptr.resize(simModel.facets.size());
         std::transform(simModel.facets.begin(), simModel.facets.end(), facet_ptr.begin(),
-                       [](std::shared_ptr<SimulationFacet> f) { return (Facet *) (f.get()); }
+                       [](const std::shared_ptr<SimulationFacet> &f) { return (Facet *) (f.get()); }
         );
 
+
+        timer.ReInit(); timer.Start();
+        Log::console_msg(3, "#ModelReader: Getting overlapping edges\n");
         std::vector<OverlappingEdge> edges_overlap;
-        NeighborScan::GetOverlappingEdges(facet_ptr, simModel.vertices3, edges_overlap);
+        /*NeighborScan::GetOverlappingEdges(facet_ptr, simModel.vertices3, edges_overlap);
         int nOverlapEdges = edges_overlap.size();
         std::vector<CommonEdge> edges_un;
+        Log::console_msg(3, "#ModelReader: Got overlapping edges {}s\n", timer.Elapsed());
+        timer.ReInit(); timer.Start();
         NeighborScan::GetAnalysedUnorientedCommonEdges(facet_ptr, edges_un);
-        NeighborScan::GetAnalysedCommonEdges(facet_ptr, edges);
+        //NeighborScan::GetAnalysedCommonEdges(facet_ptr, edges);
         // compare edges
-        for (auto edgeo_it = edges_overlap.begin(); edgeo_it != edges_overlap.end();) {
-            for (auto edge_it = edges_un.begin(); edge_it != edges_un.end(); edge_it++) {
-                if (edge_it->facetId[0] == edgeo_it->facetId1 && edge_it->facetId[1] == edgeo_it->facetId2) {
-                    edgeo_it = edges_overlap.erase(edgeo_it);
-                    edge_it = edges_un.begin();
-                    if (edgeo_it == edges_overlap.end()) {
-                        break;
-                    }
-                }
-            }
-            if (edgeo_it != edges_overlap.end())
-                edgeo_it++;
-        }
+        Log::console_msg(3, "#ModelReader: Got unoriented edges {}s\n", timer.Elapsed());
+
+        timer.ReInit(); timer.Start();
+        NeighborScan::CompareOverlap(edges_overlap, edges_un);
         // --- end ---
-        edges.clear();
-        edges_overlap.clear();
+        Log::console_msg(3, "#ModelReader: Compared overlapping edges {}s\n", timer.Elapsed());
+*/
         /*if(NeighborScan::GetAnalysedUnorientedCommonEdges(facet_ptr, edges)) {
             for (auto &edge : edges_overlap) {
                 auto id1 = edge.facetId1;
                 auto id2 = edge.facetId2;
                 auto angle = edge.angle;*/
+
+        timer.ReInit(); timer.Start();
+        //edges.clear();
+        edges_overlap.clear();
 
         if (NeighborScan::GetAnalysedOverlappingEdges(facet_ptr, simModel.vertices3, edges_overlap)) {
             for (auto &edge: edges_overlap) {
@@ -1048,6 +961,8 @@ namespace flowgpu {
             }
         }
 
+        Log::console_msg(3, "#ModelReader: Analysed edges {}s\n", timer.Elapsed());
+
         /*if(NeighborScan::GetAnalysedCommonEdges(facet_ptr, edges)) {
             for (auto &edge : edges) {
                 auto id1 = edge.facetId[0];
@@ -1068,12 +983,13 @@ namespace flowgpu {
             }
         }*/
 
+        Log::console_msg(3, "#ModelReader: Listing endangered neighbors\n");
         int facetIndex = 0;
         for (auto &poly: model->triangle_meshes.front()->poly) {
             if (poly.facProps.endangered_neighbor)
                 Log::console_msg(5, "Facet {} ({}) with offset {} [{} , {}]\n",
-                           facetIndex, poly.parentIndex, poly.facProps.offset_factor, poly.facProps.min_angle,
-                           poly.facProps.max_angle);
+                                 facetIndex, poly.parentIndex, poly.facProps.offset_factor, poly.facProps.min_angle,
+                                 poly.facProps.max_angle);
             ++facetIndex;
         }
 
@@ -1097,7 +1013,7 @@ namespace flowgpu {
                 if (tri.texProps.textureFlags != TEXTURE_FLAGS::noTexture) {
                     ++nbTex;
                     Log::console_msg(5, "#ModelReader: Tri# {} [{}] #TexOffset: {}\n", triCount++, tri.parentIndex,
-                               tri.texProps.textureOffset);
+                                     tri.texProps.textureOffset);
                 }
             }
             Log::console_msg(5, "#ModelReader: #SharpNeighborTri {}/{}\n", count_neigh, mesh->poly.size());

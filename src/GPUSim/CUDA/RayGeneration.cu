@@ -629,6 +629,11 @@ void recordDesorption(const unsigned int& counterIdx, const flowgpu::Polygon& po
 #else
     const flowgpu::PolygonRayGenData* rayGenData = (flowgpu::PolygonRayGenData*) optixGetSbtDataPointer();
 #endif
+#ifdef BOUND_CHECK
+            if(hitData.hitFacetId >= optixLaunchParams.simConstants.nbFacets){
+                printf("[ActiveStart] facIndex %u >= %u is out of bounds (%u)\n", hitData.hitFacetId, optixLaunchParams.simConstants.nbFacets, hitData.inSystem);
+            }
+#endif
             apply_offset(rayGenData->poly[hitData.hitFacetId], hitData, rayOrigin);
             /*if(rayGenData->poly[hitData.hitFacetId].facProps.endangered_neighbor) { // with offset to center
                 rayOrigin = offset_to_center(hitData.hitPos, hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId]);
