@@ -373,7 +373,7 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                 else
                     particle.lastIntersected = -1;
 
-#if defined(DEBUG)
+#if defined(DEBUG) && defined(RAY_COMPARE)
                 // WIP: Compare
                 Ray ray;
                 ray.direction = particle.direction;
@@ -427,7 +427,7 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                 found = model->accel.at(particle.structure)->Intersect(particle);
                 //}
 
-#if defined(DEBUG)
+#if defined(DEBUG) && defined(RAY_COMPARE)
                 // particle is selected (e.g rope) algorithm, ray is always regular traversal
                 if(found != testFound
                    || particle.hardHit.hitId != ray.hardHit.hitId
@@ -472,7 +472,7 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                         }
                     }
 #else
-#ifdef DEBUG
+#if defined(DEBUG) && defined(RAY_COMPARE)
                     if(!particle.transparentHits.empty()){
                         for(auto h = 0; h < ray.transparentHits.size(); ++h){
                             auto& hit = ray.transparentHits[h];
@@ -486,51 +486,57 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                     }
 #endif
 
-                    std::set<int> newtrans;
-                    std::set<size_t> alreadyHit; // account for duplicate hits on kdtree
-                    for(auto& hit : particle.transparentHits){
-                        if(particle.tMax <= hit.hit.colDistTranspPass) {
-                            continue;
-                        }
+                    if(model->wp.accel_type==1) { // todo: remove; this wrap is just to debug
+                        static std::set<int> newtrans;
+                        static std::set<size_t> alreadyHit; // account for duplicate hits on kdtree
 
-                        // Second pass for transparent hits
-                        auto tpFacet = model->facets[hit.hitId].get();
-                        if(model->wp.accel_type==1) { // account for duplicate hits on kdtree
-                            if (alreadyHit.find(tpFacet->globalId) == alreadyHit.end()) {
+                        for (auto &hit: particle.transparentHits) {
+                            if (particle.tMax <= hit.hit.colDistTranspPass) {
+                                continue;
+                            }
+
+                            // Second pass for transparent hits
+                            auto tpFacet = model->facets[hit.hitId].get();
+                            if (model->wp.accel_type == 1) { // account for duplicate hits on kdtree
+                                if (alreadyHit.find(tpFacet->globalId) == alreadyHit.end()) {
+                                    tmpFacetVars[hit.hitId] = hit.hit;
+                                    RegisterTransparentPass(tpFacet);
+                                    alreadyHit.insert(tpFacet->globalId);
+                                }
+                                    // TODO: Test for ropes
+                                else if (hit.hit.colDistTranspPass < tmpFacetVars[hit.hitId].colDistTranspPass) {
+                                    tmpFacetVars[hit.hitId] = hit.hit;
+                                }
+                            } else {
+                                newtrans.emplace(tpFacet->globalId);
+                                assert(hit.hitId == tpFacet->globalId);
+#if defined(USE_OLD_BVH)
+                                assert(tmpFacetVars[hit.hitId].colU == hit.hit.colU);
+                                assert(tmpFacetVars[hit.hitId].colV == hit.hit.colV);
+                                //assert(tmpFacetVars[hit.hitId].isHit == hit.hit.isHit);
+                                assert(tmpFacetVars[hit.hitId].colDistTranspPass == hit.hit.colDistTranspPass);
+#endif
                                 tmpFacetVars[hit.hitId] = hit.hit;
                                 RegisterTransparentPass(tpFacet);
-                                alreadyHit.insert(tpFacet->globalId);
                             }
-                            // TODO: Test for ropes
-                            else if(hit.hit.colDistTranspPass < tmpFacetVars[hit.hitId].colDistTranspPass) {
-                                tmpFacetVars[hit.hitId] = hit.hit;
-                            }
-                        }
-                        else {
-                            newtrans.emplace(tpFacet->globalId);
-                            assert(hit.hitId == tpFacet->globalId);
-#if defined(USE_OLD_BVH)
                             assert(tmpFacetVars[hit.hitId].colU == hit.hit.colU);
                             assert(tmpFacetVars[hit.hitId].colV == hit.hit.colV);
                             //assert(tmpFacetVars[hit.hitId].isHit == hit.hit.isHit);
                             assert(tmpFacetVars[hit.hitId].colDistTranspPass == hit.hit.colDistTranspPass);
-#endif
                             tmpFacetVars[hit.hitId] = hit.hit;
-                            RegisterTransparentPass(tpFacet);
                         }
-                        assert(tmpFacetVars[hit.hitId].colU == hit.hit.colU);
-                        assert(tmpFacetVars[hit.hitId].colV == hit.hit.colV);
-                        //assert(tmpFacetVars[hit.hitId].isHit == hit.hit.isHit);
-                        assert(tmpFacetVars[hit.hitId].colDistTranspPass == hit.hit.colDistTranspPass);
-                        tmpFacetVars[hit.hitId] = hit.hit;
-                    }
 
 #if defined(USE_OLD_BVH)
-                    assert(particle.transparentHits.size() == transparentHitBuffer.size());
-                    assert(oldtrans.size() == newtrans.size());
+                        assert(particle.transparentHits.size() == transparentHitBuffer.size());
+                        assert(oldtrans.size() == newtrans.size());
 #endif
 
+                        newtrans.clear();
+                        alreadyHit.clear();
+                    }
+
                     particle.transparentHits.clear();
+
 
 #endif
                 }
