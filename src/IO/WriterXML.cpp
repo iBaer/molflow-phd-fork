@@ -279,7 +279,7 @@ bool WriterXML::SaveSimulationState(xml_document &saveDoc, std::shared_ptr<Molfl
     reportWriteStatus("Writing simulation results...");
     for (size_t m = 0; m <= model->tdParams.moments.size(); m++) {
         //setWriteProgress(0.5 + 0.5 * (double) m / (1.0 + (double) model->tdParams.moments.size()));
-        reportNewWriteStatus("Writing simulation results...", 0.5 + 0.5 * (double) m / (1.0 + (double) model->tdParams.moments.size()));
+        reportNewWriteStatus("Writing simulation results...", 100.0 * (0.5 + 0.5 * (double) m / (1.0 + (double) model->tdParams.moments.size())));
         xml_node newMoment = momentsNode.append_child("Moment");
         newMoment.append_attribute("id") = m;
         if (m == 0) {
