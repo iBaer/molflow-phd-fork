@@ -238,6 +238,8 @@ MolFlow::MolFlow()
 	useOldXMLFormat = false;
 	FormulaEvaluator* eval = new FormulaEvaluator_MF(&worker,(MolflowGeometry*)worker.GetGeometry(),&selections);
     formula_ptr = std::make_shared<Formulas>(eval);
+    if(worker.model)
+        worker.model->otfParams.formula_ptr = formula_ptr;
 }
 
 // Name: OneTimeSceneInit()
@@ -1876,7 +1878,11 @@ void MolFlow::ProcessMessage(GLComponent *src, int message)
 			}
 		}
 		else if (src == globalSettingsBtn) {
-		    if(imWnd) imWnd->ToggleGlobalSettings();
+            if(!imWnd) {
+                imWnd = new ImguiWindow(this);
+                imWnd->init();
+            }
+            imWnd->ToggleGlobalSettings();
 			/*if (!globalSettings) globalSettings = new GlobalSettings(&worker);
 			if (!globalSettings->IsVisible()) {
 				globalSettings->Update();

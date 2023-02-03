@@ -35,6 +35,7 @@ WorkerParams::WorkerParams(){
 
 OntheflySimulationParams::OntheflySimulationParams(){
     nbProcess = 0;
+    batch_size = 100000;
     enableLogging = false;
     desorptionLimit = 0;
     lowFluxCutoff = 1.0E-7;
@@ -45,6 +46,7 @@ OntheflySimulationParams::OntheflySimulationParams(){
 
     benchmarkADS = false;
     raySampling = false;
+    calc_convergence = false;
 }
 
 void FacetHistogramBuffer::Resize(const HistogramParams& params){

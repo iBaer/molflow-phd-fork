@@ -85,6 +85,64 @@ int Simulation::ReinitializeParticleLog() {
     return 0;
 }
 
+int Simulation::ReinitializeConvergenceLog() {
+    /*tmpParticleLog.clear();
+    tmpParticleLog.shrink_to_fit();
+    if (model->otfParams.enableLogging) {
+        tmpParticleLog.reserve(model->otfParams.logLimit*//* / model->otfParams.nbProcess*//*);
+    }*/
+
+    /*if(model->otfParams.calc_convergence){
+        model->otfParams.formulas_n
+    }
+
+    for(auto& particle : particles) {
+        if(!particle.tmpParticleLog.tMutex.try_lock_for(std::chrono::seconds(10)))
+            return -1;
+        particle.tmpParticleLog.clear();
+        particle.tmpParticleLog.pLog.shrink_to_fit();
+        if (model->otfParams.enableLogging) {
+            particle.tmpParticleLog.pLog.reserve(model->otfParams.logLimit*//* / model->otfParams.nbProcess*//*);
+        }
+        particle.tmpParticleLog.tMutex.unlock();
+    }*/
+    return 0;
+}
+
+int Simulation::FetchConvValues() {
+
+    if( model->otfParams.formula_ptr &&  model->otfParams.formula_ptr->formulas_n){//if(model->otfParams.calc_convergence) {
+        // Synchronise, save convergence results and restart
+        auto formulas = model->otfParams.formula_ptr->formulas_n;
+
+        // Next evaluate each formula and cache values for later usage
+        // in FormulaEditor, ConvergencePlotter
+        if (!formulas->empty()) {
+            for (int formulaId = 0; formulaId < formulas->size(); ++formulaId) {
+                double r;
+                if (formulas->at(formulaId)->Evaluate(&r)) {
+                    auto& conv_data = model->otfParams.formula_ptr->convergenceValues[formulaId];
+                    auto val_pair = std::make_pair(globState->globalHits.globalHits.nbDesorbed, r);
+                    conv_data.Append(val_pair);
+                    model->otfParams.formula_ptr->formulasChanged = true;
+                }
+                else{
+                    formulas->at(formulaId)->SetVariableEvalError(formulas->at(formulaId)->GetErrorMsg());
+                }
+            }
+            // Fetch new values ...
+        }
+    }
+
+
+    return 0;
+}
+
+int Simulation::IsConverged() {
+    return isConverged;
+}
+
+
 MFSim::Particle * Simulation::GetParticle(size_t i) {
     if(i < particles.size())
         return &particles.at(i);
@@ -194,6 +252,8 @@ void Simulation::ClearSimulation() {
 
     }
     totalDesorbed = 0;
+    isConverged = false;
+
     //ResetTmpCounters();
     /*for(auto& tmpResults : tmpGlobalResults)
         tmpResults.Reset();*/
@@ -206,6 +266,7 @@ void Simulation::ClearSimulation() {
     this->model->tdParams.parameters.clear();
     //this->temperatures.clear();
     this->model->vertices3.clear();*/
+
 }
 
 int Simulation::RebuildAccelStructure() {
@@ -243,6 +304,7 @@ size_t Simulation::LoadSimulation(char *loadStatus) {
         // Init tmp vars per thread
         particle.tmpFacetVars.assign(simModel->sh.nbFacet, SimulationFacetTempVar());
         particle.tmpState.hitBattery.resize_battery(simModel->sh.nbFacet);
+        //particle.tmpState.formulas_n->resize();
 
         //currentParticle.tmpState = *tmpResults;
         //delete tmpResults;
@@ -308,7 +370,11 @@ void Simulation::ResetSimulation() {
         particle.tmpParticleLog.clear();
     }
 
+    if(model && model->otfParams.formula_ptr)
+        model->otfParams.formula_ptr->ClearRuntimeStats();
+
     totalDesorbed = 0;
+    isConverged = false;
     //tmpParticleLog.clear();
 }
 

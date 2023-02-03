@@ -54,6 +54,10 @@ public:
     size_t GetHitsSize() override;
 
     int ReinitializeParticleLog() override;
+    int ReinitializeConvergenceLog() override;
+    int FetchConvValues() override;
+    int IsConverged() override;
+
     MFSim::Particle * GetParticle(size_t i) override;
     void SetNParticle(size_t n, bool fixedSeed) override;
 
