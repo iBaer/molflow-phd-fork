@@ -71,7 +71,7 @@ using namespace MFSim;
 bool Particle::UpdateMCHits(GlobalSimuState &globSimuState, size_t nbMoments, DWORD timeout) {
     int i, j, x, y;
 
-    Chronometer timer;
+    Chronometer timer(false);
     timer.Start();
 
     if (!globSimuState.tMutex.try_lock_for(std::chrono::milliseconds(timeout))) {
@@ -123,6 +123,28 @@ bool Particle::UpdateMCHits(GlobalSimuState &globSimuState, size_t nbMoments, DW
                 globSimuState.globalHits.hitCache[globSimuState.globalHits.lastHitIndex].type = HIT_LAST; //Penup (border between blocks of consecutive hits in the hit cache)
                 globSimuState.globalHits.hitCacheSize = Min(HITCACHESIZE, globSimuState.globalHits.hitCacheSize +
                                                                           tmpState.globalHits.hitCacheSize);
+            }
+            
+            if(model->otfParams.raySampling) {
+                auto &hitBattery = globSimuState.hitBattery;
+                if (hitBattery.initialized && hitBattery.size() > 0) {
+                    int hit_n = 0;
+                    if(hitBattery.buffer_per_facet && tmpState.hitBattery.size() == hitBattery.size()) {
+                        for (auto &bat: hitBattery.rays) {
+                            auto &tmp = tmpState.hitBattery.rays[hit_n];
+                            if (!tmp.data.empty())
+                                bat.Add_Batch(tmp.data);
+                            ++hit_n;
+                        }
+                    }
+                    else {
+                        auto &tmp = tmpState.hitBattery.grays;
+                        if (!tmp.data.empty())
+                            hitBattery.grays.Add_Batch(tmp.data);
+                    }
+                } else {
+                    globSimuState.UpdateBatteryFrequencies();
+                }
             }
         }
 
@@ -286,7 +308,7 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
         particleId = ompIndex;
         size_t i;
 
-#if !defined(USE_OLD_BVH)
+#if defined(USE_OLD_BVH)
         //std::vector<HitLink> hits;
         //hits.reserve(4);
         particle.pay = nullptr;
@@ -295,6 +317,21 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
             particle.lastIntersected = lastHitFacet->globalId;
         else
             particle.lastIntersected = -1;
+        auto copy_rng = randomGenerator;
+        particle.rng = &randomGenerator;
+
+        //particle.hits = &hits;
+#else
+//std::vector<HitLink> hits;
+        //hits.reserve(4);
+        //particle.pay = nullptr;
+        particle.tMax = 1.0e99;
+        if(lastHitFacet)
+            particle.lastIntersected = lastHitFacet->globalId;
+        else
+            particle.lastIntersected = -1;
+
+        if(particle.pay) ((RopePayload*)particle.pay)->lastNode = nullptr;
         particle.rng = &randomGenerator;
 
         //particle.hits = &hits;
@@ -308,6 +345,20 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                     returnVal = false; // desorp limit reached
                     break;
                 }
+                if(particle.pay) ((RopePayload*)particle.pay)->lastNode = nullptr;
+
+                //DEBUG
+                /*particle.origin = {-6.4573631052006828,0.32848390990035026,17.554289139097389};
+                particle.direction = {-0.43593250084036084,-0.60556971638170987,-0.66576885877340675};
+                particle.lastIntersected = 860;
+                lastHitFacet = model->facets.at(860).get();
+                if(!particle.pay)
+                    new RopePayload;
+                if(dynamic_cast<KdTreeAccel*>(model->accel.at(particle.structure).get())){
+                    if(particle.pay)((RopePayload*)particle.pay)->lastNode = &dynamic_cast<KdTreeAccel*>(model->accel.at(particle.structure).get())->nodes[14386];
+                }*/
+                //ENDDEBUG
+
                 insertNewParticle = false;
                 --remainingDes;
             }
@@ -321,11 +372,27 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
 
             //Prepare output values
 #if defined(USE_OLD_BVH)
-            auto[found, collidedFacet, d] = Intersect(*this, particle.origin,
+            auto* tmprng = particle.rng;
+            particle.rng = &copy_rng;
+
+            auto[oldfound, oldcollidedFacet, oldd] = Intersect(*this, particle.origin,
                                                       particle.direction, model->structures[particle.structure].aabbTree.get());
             //printf("%lf ms time spend in old BVH\n", tmpTime.ElapsedMs());
-#else
-            transparentHitBuffer.clear();
+            //TODO: compare results
+            std::set<int> oldtrans;
+            if(oldfound){
+                for(auto& trans : transparentHitBuffer) {
+                    if(trans != nullptr) {
+                        oldtrans.emplace(trans->globalId);
+                        //RegisterTransparentPass(trans);
+                    }
+                }
+            }
+
+            // reset rng for equal compare
+            particle.rng = tmprng;
+#endif
+            //transparentHitBuffer.clear();
             bool found;
             SimulationFacet* collidedFacet;
             double d;
@@ -334,13 +401,80 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                 //particle.hits = &hits;
                 //particle.rng = &randomGenerator;
                 particle.tMax = 1.0e99;
-                /*if(lastHitFacet)
+                if(lastHitFacet)
                     particle.lastIntersected = lastHitFacet->globalId;
                 else
-                    particle.lastIntersected = -1;*/
+                    particle.lastIntersected = -1;
 
+#if defined(DEBUG)
+                // WIP: Compare
+                Ray ray;
+                ray.direction = particle.direction;
+                ray.origin = particle.origin;
+                ray.lastIntersected = particle.lastIntersected;
+                ray.structure = particle.structure;
+                ray.tMax = particle.tMax;
+                ray.rng = new MersenneTwister;
+                *ray.rng = *particle.rng;
+
+                RayStat ray2;
+                ray2.direction = particle.direction;
+                ray2.origin = particle.origin;
+                ray2.lastIntersected = particle.lastIntersected;
+                ray2.structure = particle.structure;
+                ray2.tMax = particle.tMax;
+                ray2.rng = new MersenneTwister;
+                *ray2.rng = *particle.rng;
+                if(model->wp.kd_restart_ropes)
+                    ray2.pay = new RopePayload;
+
+
+                bool testFound = false;
+                if(dynamic_cast<KdTreeAccel*>(model->accel.at(particle.structure).get())){
+                    testFound = dynamic_cast<KdTreeAccel*>(model->accel.at(particle.structure).get())->IntersectTrav(ray);
+                    //assert(found == foundRope);
+                }
+                delete ray.rng;
+                //found = model->accel.at(particle.structure)->Intersect(particle);
+                /*if(dynamic_cast<KdTreeAccel*>(model->accel.at(particle.structure).get())){
+                    found = dynamic_cast<KdTreeAccel*>(model->accel.at(particle.structure).get())->IntersectRope(particle);
+                    //assert(found == foundRope);
+                }
+                else{*/
+                const KdAccelNode* tmp = nullptr;
+                if(particle.pay) {
+                    if (dynamic_cast<KdTreeAccel *>(model->accel.at(particle.structure).get())) {
+                        if (dynamic_cast<KdTreeAccel *>(model->accel.at(particle.structure).get())->restartFromNode)
+                            tmp = ((RopePayload *) particle.pay)->lastNode;
+                    }
+                    ((RopePayload *) ray2.pay)->lastNode = tmp;
+                    if (particle.pay)((RopePayload *) ray2.pay)->lastRay = ((RopePayload *) particle.pay)->lastRay;
+                }
+#endif
+
+#if defined(PROFILING)
+                RayStat testParticle(particle);
+                found = model->accel.at(testParticle.structure)->IntersectStat(testParticle);
+                testParticle.pay = nullptr; // unreference as delete is managed by original particle
+#endif
                 found = model->accel.at(particle.structure)->Intersect(particle);
+                //}
+
+#if defined(DEBUG)
+                // particle is selected (e.g rope) algorithm, ray is always regular traversal
+                if(found != testFound
+                   || particle.hardHit.hitId != ray.hardHit.hitId
+                || particle.hardHit.hit.colDistTranspPass != ray.hardHit.hit.colDistTranspPass){
+                    std::cerr << "Verification error\n";
+                    found = model->accel.at(particle.structure)->IntersectStat(ray2);
+                }
+                delete ray2.rng;
+#endif
+
+
                 if(found){
+
+#if defined (OLD_HITLINK)
 
                     // first pass
                     std::set<size_t> alreadyHit; // account for duplicate hits on kdtree
@@ -355,6 +489,8 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
 
                             // Second pass for transparent hits
                             auto tpFacet = model->facets[hit.hitId].get();
+                            tmpFacetVars[hit.hitId] = hit.hit;
+
                             if(model->wp.accel_type==1) { // account for duplicate hits on kdtree
                                 if (alreadyHit.find(tpFacet->globalId) == alreadyHit.end()) {
                                     tmpFacetVars[hit.hitId] = hit.hit;
@@ -368,9 +504,72 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                             }
                         }
                     }
+#else
+#ifdef DEBUG
+                    if(!particle.transparentHits.empty()){
+                        for(auto h = 0; h < ray.transparentHits.size(); ++h){
+                            auto& hit = ray.transparentHits[h];
+                            for(auto hh = h; hh < ray.transparentHits.size(); ++hh){
+                                auto& comp_hit = ray.transparentHits[hh];
+                                if(hit.hitId == comp_hit.hitId && hit.hit.colU != comp_hit.hit.colU){
+                                    std::cout << "Multi hit"<< comp_hit.hit.colU << " vs " << hit.hit.colU << "\n";
+                                }
+                            }
+                        }
+                    }
+#endif
+
+                    std::set<int> newtrans;
+                    std::set<size_t> alreadyHit; // account for duplicate hits on kdtree
+                    for(auto& hit : particle.transparentHits){
+                        if(particle.tMax <= hit.hit.colDistTranspPass) {
+                            continue;
+                        }
+
+                        // Second pass for transparent hits
+                        auto tpFacet = model->facets[hit.hitId].get();
+                        if(model->wp.accel_type==1) { // account for duplicate hits on kdtree
+                            if (alreadyHit.find(tpFacet->globalId) == alreadyHit.end()) {
+                                tmpFacetVars[hit.hitId] = hit.hit;
+                                RegisterTransparentPass(tpFacet);
+                                alreadyHit.insert(tpFacet->globalId);
+                            }
+                            // TODO: Test for ropes
+                            else if(hit.hit.colDistTranspPass < tmpFacetVars[hit.hitId].colDistTranspPass) {
+                                tmpFacetVars[hit.hitId] = hit.hit;
+                            }
+                        }
+                        else {
+                            newtrans.emplace(tpFacet->globalId);
+                            assert(hit.hitId == tpFacet->globalId);
+#if defined(USE_OLD_BVH)
+                            assert(tmpFacetVars[hit.hitId].colU == hit.hit.colU);
+                            assert(tmpFacetVars[hit.hitId].colV == hit.hit.colV);
+                            //assert(tmpFacetVars[hit.hitId].isHit == hit.hit.isHit);
+                            assert(tmpFacetVars[hit.hitId].colDistTranspPass == hit.hit.colDistTranspPass);
+#endif
+                            tmpFacetVars[hit.hitId] = hit.hit;
+                            RegisterTransparentPass(tpFacet);
+                        }
+                        assert(tmpFacetVars[hit.hitId].colU == hit.hit.colU);
+                        assert(tmpFacetVars[hit.hitId].colV == hit.hit.colV);
+                        //assert(tmpFacetVars[hit.hitId].isHit == hit.hit.isHit);
+                        assert(tmpFacetVars[hit.hitId].colDistTranspPass == hit.hit.colDistTranspPass);
+                        tmpFacetVars[hit.hitId] = hit.hit;
+                    }
+
+#if defined(USE_OLD_BVH)
+                    assert(particle.transparentHits.size() == transparentHitBuffer.size());
+                    assert(oldtrans.size() == newtrans.size());
+#endif
+
+                    particle.transparentHits.clear();
+
+#endif
                 }
 
                 particle.hits.clear();
+                transparentHitBuffer.clear();
             }
 
             // hard hit
@@ -380,6 +579,15 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                 tmpFacetVars[hit.hitId] = hit.hit;
                 d = hit.hit.colDistTranspPass;
             }
+
+#if defined(USE_OLD_BVH)
+            assert(found == oldfound);
+            if(found) {
+                assert(collidedFacet->globalId == oldcollidedFacet->globalId);
+                assert(d == oldd);
+            }
+#endif
+            //found = oldfound;collidedFacet = oldcollidedFacet;d = oldd;
             /*{
                 Ray tmpRay(position, particle.direction, nullptr, 1.0e99, this->particle.time);
                 if(lastHitFacet)
@@ -412,7 +620,7 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
 
                 DeleteChain(&hitChain);
             }*/
-#endif //use old bvh
+//#endif //use old bvh
 
             if (found) {
 
@@ -457,8 +665,9 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
                         IncreaseDistanceCounters(d * oriRatio);
                         const double stickingProbability = model->GetStickingAt(collidedFacet, particle.time);
                         if (!model->otfParams.lowFluxMode) { //Regular stick or bounce
+                            double stickingRand = randomGenerator.rnd();
                             if (stickingProbability == 1.0 ||
-                                ((stickingProbability > 0.0) && (randomGenerator.rnd() < (stickingProbability)))) {
+                                ((stickingProbability > 0.0) && (stickingRand < (stickingProbability)))) {
                                 //Absorbed
                                 RecordAbsorb(collidedFacet);
                                 //currentParticle.lastHitFacet = nullptr; // null facet in case we reached des limit and want to go on, prevents leak
@@ -525,6 +734,7 @@ bool Particle::StartFromSource(Ray& ray) {
     double sumA = 0.0;
     size_t i = 0, j = 0;
     int nbTry = 0;
+    if(particle.pay) ((RopePayload*)particle.pay)->lastNode = nullptr;
 
     // Check end of simulation
     /*if (model->otfParams.desorptionLimit > 0) {
@@ -1391,6 +1601,10 @@ void Particle::RecordHit(const int &type) {
         tmpState.globalHits.hitCache[tmpState.globalHits.hitCacheSize].type = type;
         ++tmpState.globalHits.hitCacheSize;
     }
+    if(tmpState.hitBattery.buffer_per_facet)
+        tmpState.hitBattery.rays[particle.lastIntersected].Add_Linear(TestRay(particle.origin, particle.direction, particle.lastIntersected));
+    else
+        tmpState.hitBattery.grays.Add_Linear(TestRay(particle.origin, particle.direction, particle.lastIntersected));
 }
 
 void Particle::RecordLeakPos() {

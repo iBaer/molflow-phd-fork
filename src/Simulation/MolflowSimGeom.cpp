@@ -27,14 +27,19 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include <sstream>
 
 #include "Helper/MathTools.h"
-#include "CDFGeneration.h"
-#include "IDGeneration.h"
-#include "Helper/Chronometer.h"
-#include "Helper/ConsoleLogger.h"
-#include "Polygon.h"
+#include <Simulation/CDFGeneration.h>
+#include <Simulation/IDGeneration.h>
+#include <Simulation/AnglemapGeneration.h>
+#include <Helper/Chronometer.h>
+#include <Helper/ConsoleLogger.h>
+#include <Polygon.h>
 #include "MolflowSimGeom.h"
 #include "MolflowSimFacet.h"
+#include <random>
+#include <omp.h>
+
 #include "IntersectAABB_shared.h" // include needed for recursive delete of AABBNODE
+#include "AABB.h"
 
 /**
 * \brief Computes with a distribution function and a random number whether a hit on a surface is "hard" or not
@@ -48,6 +53,49 @@ bool ParameterSurface::IsHardHit(const Ray &r) {
     else
         return (r.rng->rnd() < td_opacity);
 };
+
+int MolflowSimulationModel::CalculateKDStats(const std::vector<TestRay>& hits, int& isect_cost){
+    if(hits.empty() || accel.empty())
+        return 1;
+
+    for (auto &acc: accel) {
+        RTStats tree_stats{};
+        RTStats tree_stats_max{};
+        auto r = Ray();
+#pragma omp parallel default(none) firstprivate(r) shared(hits, acc, tree_stats, tree_stats_max)
+        {
+            r.rng = new MersenneTwister();
+#pragma omp for
+            for (int sample_id = 0; sample_id < hits.size(); sample_id++) {
+                auto &ray = hits[sample_id];
+                r.origin = ray.pos;
+                r.direction = ray.dir;
+                auto stats = ((KdTreeAccel *) acc.get())->IntersectT(r);
+
+#pragma omp critical
+                {
+                    tree_stats.nTraversedInner += stats.nTraversedInner;
+                    tree_stats.nTraversedLeaves += stats.nTraversedLeaves;
+                    tree_stats.nIntersections += stats.nIntersections;
+                    tree_stats.timeTrav += stats.timeTrav;
+                    tree_stats.timeInt += stats.timeInt;
+                    tree_stats_max.nTraversedInner = std::max(stats.nTraversedInner,
+                                                              tree_stats_max.nTraversedInner);
+                    tree_stats_max.nTraversedLeaves = std::max(stats.nTraversedLeaves,
+                                                               tree_stats_max.nTraversedLeaves);
+                    tree_stats_max.nIntersections = std::max(stats.nIntersections,
+                                                             tree_stats_max.nIntersections);
+                }
+            }
+        }
+        Log::console_msg_master(4, "KD Tree stats:\n{} | {} | {}\n", (double) tree_stats.nTraversedInner / hits.size(), (double) tree_stats.nTraversedLeaves / hits.size(), (double) tree_stats.nIntersections / hits.size());
+        Log::console_msg_master(4, "KD Tree max:\n{} | {} | {}\n", tree_stats_max.nTraversedInner, tree_stats_max.nTraversedLeaves, tree_stats_max.nIntersections);
+        Log::console_msg_master(4, "KD cost:\n{} | {}\n", tree_stats.timeTrav / (double) tree_stats.nTraversedInner, tree_stats.timeInt / (double) tree_stats.nIntersections);
+        isect_cost = std::ceil((tree_stats.timeTrav / (double)tree_stats.nTraversedInner) / (tree_stats.timeInt / (double)tree_stats.nIntersections));
+    }
+
+    return 0;
+}
 
 /**
 * \brief Testing purpose function, construct an angled PRISMA / parallelepiped
@@ -173,17 +221,25 @@ void  MolflowSimulationModel::BuildPrisma(double L, double R, double angle, doub
 * \param bvh_width for BVH, the amount of leaves per end node
  * \return 0> for error codes, 0 when no problems
 */
-int MolflowSimulationModel::BuildAccelStructure(GlobalSimuState *globState, AccelType accel_type, BVHAccel::SplitMethod split,
-                                                int bvh_width) {
+int MolflowSimulationModel::BuildAccelStructure(GlobalSimuState *globState, AccelType accel_type,
+                                                int split, int bvh_width, double hybridWeight) {
 
     initialized = false;
-    Chronometer timer;
+    Chronometer timer(false);
     timer.Start();
 
     if (!m.try_lock()) {
         return 1;
     }
 
+    // First clear old ADS
+    this->accel.clear();
+
+    for(auto& fac : facets){
+        fac->nbTraversalSteps = 0;
+        fac->nbIntersections = 0;
+        fac->nbTests = 0;
+    }
 #if defined(USE_OLD_BVH)
     std::vector<std::vector<SimulationFacet*>> facetPointers;
     facetPointers.resize(this->sh.nbSuper);
@@ -210,7 +266,7 @@ int MolflowSimulationModel::BuildAccelStructure(GlobalSimuState *globState, Acce
         //delete tree; // pointer unnecessary because of make_shared
     }
 
-#else
+#endif
     std::vector<std::vector<std::shared_ptr<Primitive>>> primPointers;
     primPointers.resize(this->sh.nbSuper);
     for(auto& sFac : this->facets){
@@ -236,36 +292,213 @@ int MolflowSimulationModel::BuildAccelStructure(GlobalSimuState *globState, Acce
         sFac->surf = GetSurface(sFac.get());
     }
 
-    this->accel.clear();
-    if(BVHAccel::SplitMethod::ProbSplit == split && globState && globState->initialized && globState->globalHits.globalHits.nbDesorbed > 0){
-        if(globState->facetStates.size() != this->facets.size())
+    std::vector<TestRay> hits;
+
+    bool withTestBattery = false;
+    if(accel_type==0)
+        withTestBattery = (BVHAccel::SplitMethod::RDH == (BVHAccel::SplitMethod) split);
+    else
+        withTestBattery = (KdTreeAccel::SplitMethod::TestSplit == (KdTreeAccel::SplitMethod) split)
+                          || (KdTreeAccel::SplitMethod::HybridSplit == (KdTreeAccel::SplitMethod) split)
+                             || (KdTreeAccel::SplitMethod::HybridBin == (KdTreeAccel::SplitMethod) split);
+
+    if(withTestBattery)
+        if(globState && globState->initialized) {
+            hits = globState->PrepareHitBattery();
+        }
+
+    if(withTestBattery && !hits.empty()){
+        if(hits.empty()) {
+            m.unlock();
             return 1;
+        }
+
+        // Pre run with SAH
+        for (size_t s = 0; s < this->sh.nbSuper; ++s) {
+            if(accel_type == 1)
+                this->accel.emplace_back(std::make_shared<KdTreeAccel>(KdTreeAccel::SplitMethod::SAH, primPointers[s]));
+            else
+                this->accel.emplace_back(std::make_shared<BVHAccel>(primPointers[s], bvh_width, BVHAccel::SplitMethod::SAH));
+        }
+
+        int isect_cost = 80;
+        int trav_cost = 1;
+        if(accel_type == 1) {
+            fmt::print("Stats for KDxSAH [baseline]\n");
+            CalculateKDStats(hits, isect_cost);
+            // Clear tmp ADS
+            this->accel.clear();
+        }
+        else if(accel_type == 0) {
+            fmt::print("Stats for BVHxSAH [baseline]\n");
+            fmt::print("-- not yet implemented -- \n");
+            //CalculateKDStats(hits, isect_cost);
+            // Clear tmp ADS
+            this->accel.clear();
+        }
+        //isect_cost = 80;
+        // same as prob split
+        std::vector<double> frequencies;
+        frequencies.reserve(globState->facetStates.size());
+        if(globState->globalHits.globalHits.nbHitEquiv > 0.0) {
+            for (auto &facet_stat: globState->facetStates) {
+                frequencies.emplace_back((double) facet_stat.momentResults[0].hits.nbHitEquiv /
+                                         (double) globState->globalHits.globalHits.nbHitEquiv);
+            }
+        }
+        else if(!hits.empty()){
+            for (size_t s = 0; s < this->sh.nbSuper; ++s)
+                frequencies = ComputeHitChances(hits, primPointers[s]);
+        }
+
+        for (size_t s = 0; s < this->sh.nbSuper; ++s) {
+            if(accel_type == 1) {
+                if(this->wp.ignore_calculated_costs)
+                    this->accel.emplace_back(std::make_shared<KdTreeAccel>((KdTreeAccel::SplitMethod) split, primPointers[s], frequencies, hits, hybridWeight));
+                else
+                    this->accel.emplace_back(std::make_shared<KdTreeAccel>((KdTreeAccel::SplitMethod) split, primPointers[s], frequencies, hits, hybridWeight, isect_cost, trav_cost));
+            }
+            else
+                this->accel.emplace_back(std::make_shared<BVHAccel>(hits, primPointers[s], bvh_width, (BVHAccel::SplitMethod) split));
+        }
+    }
+    else if((accel_type==0)
+            ? (BVHAccel::SplitMethod::ProbSplit == (BVHAccel::SplitMethod) split)
+            : (KdTreeAccel::SplitMethod::ProbSplit == (KdTreeAccel::SplitMethod) split) || (KdTreeAccel::SplitMethod::ProbHybrid == (KdTreeAccel::SplitMethod) split)){
+        if(globState && globState->initialized && globState->globalHits.globalHits.nbDesorbed > 0 && globState->facetStates.size() != this->facets.size()) {
+            m.unlock();
+            return 1;
+        }
         std::vector<double> probabilities;
         probabilities.reserve(globState->facetStates.size());
         for(auto& state : globState->facetStates) {
             probabilities.emplace_back(state.momentResults[0].hits.nbHitEquiv / globState->globalHits.globalHits.nbHitEquiv);
         }
+        double sum = 0.0;
+        for(auto& prob : probabilities){
+            sum += prob;
+        }
+        if(sum < 1e-3) {
+            m.unlock();
+            return 1;
+        }
+
         for (size_t s = 0; s < this->sh.nbSuper; ++s) {
             if(accel_type == 1)
-                this->accel.emplace_back(std::make_shared<KdTreeAccel>(primPointers[s], probabilities));
+                this->accel.emplace_back(std::make_shared<KdTreeAccel>((KdTreeAccel::SplitMethod) split, primPointers[s], probabilities, std::vector<TestRay>{}, hybridWeight));
             else
-                this->accel.emplace_back(std::make_shared<BVHAccel>(primPointers[s], bvh_width, BVHAccel::SplitMethod::ProbSplit, probabilities));
+                this->accel.emplace_back(std::make_shared<BVHAccel>(probabilities, primPointers[s], bvh_width));
         }
     }
     else {
         for (size_t s = 0; s < this->sh.nbSuper; ++s) {
             if(accel_type == 1)
-                this->accel.emplace_back(std::make_shared<KdTreeAccel>(primPointers[s]));
+                this->accel.emplace_back(std::make_shared<KdTreeAccel>((KdTreeAccel::SplitMethod) split, primPointers[s]));
             else
-                this->accel.emplace_back(std::make_shared<BVHAccel>(primPointers[s], bvh_width, split));
+                this->accel.emplace_back(std::make_shared<BVHAccel>(primPointers[s], bvh_width, (BVHAccel::SplitMethod)split));
         }
     }
-#endif // old_bvb
+
+    if(accel.size() != this->sh.nbSuper) {
+        m.unlock();
+        return 1;
+    }
+
+    if(accel_type == 1 && this->wp.kd_with_ropes) {
+        for (size_t s = 0; s < this->sh.nbSuper; ++s) {
+            auto kd = this->accel[s].get();
+            dynamic_cast<KdTreeAccel *>(kd)->AddRopes(true);
+        }
+    }
+
+    if(accel_type == 1 && !hits.empty()){
+        std::stringstream os; // or provide fmt formatter
+        os << static_cast<KdTreeAccel::SplitMethod>(split);
+        fmt::print("Stats for KD with split {}\n", os.str());
+        int isect_cost = 0;
+        CalculateKDStats(hits, isect_cost);
+    }
+    // old_bvb
 
     timer.Stop();
     m.unlock();
 
     initialized = true;
+
+    return 0;
+}
+
+std::vector<double> MolflowSimulationModel::ComputeHitChances(const std::vector<TestRay>& battery, const std::vector<std::shared_ptr<Facet>>& primitives) {
+
+    std::vector<double> primChance;
+    auto ray = Ray();
+#pragma omp parallel default(none) firstprivate(ray) shared(primitives, battery, primChance)
+    {
+        const int nthreads = omp_get_num_threads();
+        const int ithread = omp_get_thread_num();
+        const int nprims = primitives.size();
+        std::unique_ptr<double[]> local_chances;
+#pragma omp single
+        {
+            local_chances = std::make_unique<double[]>(nprims * nthreads);
+            for(int i=0; i<(nprims*nthreads); i++) local_chances[i] = 0.0;
+        }
+
+        ray.rng = new MersenneTwister();
+#pragma omp for
+        for (int sample_id = 0; sample_id < battery.size(); sample_id++) {
+            auto& test = battery[sample_id];
+            ray.origin = test.pos;
+            ray.direction = test.dir;
+            Vector3d invDir(1.0 / ray.direction.x, 1.0 / ray.direction.y, 1.0 / ray.direction.z);
+            int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
+            for (size_t i = 0; i < nprims; ++i) {
+                bool hit = primitives[i]->Intersect(ray);
+                if (hit) {
+                    local_chances[ithread*nprims+i] += 1.0;
+                }
+            }
+        }
+        delete ray.rng;
+
+        // parallel reduce
+#pragma omp for
+        for (int i = 0; i < nprims; ++i) {
+            for(int t = 0; t < nthreads; t++)
+                primChance[i] += local_chances[t*nprims+i];
+        }
+
+#pragma omp for
+        for (int i = 0; i < primitives.size(); ++i) {
+            primChance[i] /= battery.size();
+        }
+    }
+
+    return primChance;
+}
+
+int MolflowSimulationModel::ComputeHitStats(const std::vector<TestRay>& battery) {
+
+#pragma omp parallel default(none) shared(battery)
+    {
+        auto ray = RayStat();
+        ray.rng = new MersenneTwister();
+        if(wp.kd_restart_ropes)
+            ray.pay = new RopePayload();
+        //Node stats
+#pragma omp for
+        for (int sample_id = 0; sample_id < battery.size(); sample_id++) {
+            auto& test = battery[sample_id];
+            ray.origin = test.pos;
+            ray.direction = test.dir;
+            Vector3d invDir(1.0 / ray.direction.x, 1.0 / ray.direction.y, 1.0 / ray.direction.z);
+            int dirIsNeg[3] = {invDir.x < 0, invDir.y < 0, invDir.z < 0};
+            for(auto& tree : accel)
+                tree->IntersectStat(ray);
+        }
+
+        delete ray.rng;
+    }
 
     return 0;
 }
@@ -508,6 +741,7 @@ void GlobalSimuState::Resize(const std::shared_ptr<SimulationModel> &model) {
 
     //Global histogram
 
+    hitBattery.resize_battery(model->facets.size());
     FacetHistogramBuffer globalHistTemplate{};
     globalHistTemplate.Resize(model->wp.globalHistogramParams);
     globalHistograms.assign(1 + nbMoments, globalHistTemplate);
@@ -527,6 +761,11 @@ void GlobalSimuState::Reset() {
         ZEROVECTOR(h.timeHistogram);
     }
     memset(&globalHits, 0, sizeof(globalHits)); //Plain old data
+    hitBattery.clear();
+    if(!facetStates.empty()) {
+        //hitBattery.clear();
+        hitBattery.reserve_battery(hitBattery.maxSamples, facetStates.size());
+    }
     for (auto& state : facetStates) {
         ZEROVECTOR(state.recordedAngleMapPdf);
         for (auto& m : state.momentResults) {
@@ -1188,4 +1427,416 @@ FacetState& FacetState::operator+=(const FacetState & rhs) {
         this->recordedAngleMapPdf += rhs.recordedAngleMapPdf;
     this->momentResults += rhs.momentResults;
     return *this;
+}
+
+int GlobalSimuState::UnlimitBattery() {
+
+    int estSamplesPerFacet = 5000;
+    const double ratio = (double)estSamplesPerFacet / (double)facetStates.size();
+    int bat_n = 0;
+    for(auto& bat : hitBattery.rays){
+        bat.Resize(std::ceil(ratio * hitBattery.maxSamples));
+        bat_n++;
+    }
+
+    hitBattery.initialized = true;
+
+    return 0;
+}
+
+
+int GlobalSimuState::UpdateBatteryFrequencies() {
+
+    if((globalHits.globalHits.nbMCHit + globalHits.globalHits.nbDesorbed) < hitBattery.maxSamples) {
+        hitBattery.initialized = false;
+        return 1;
+    }
+
+    std::vector<double> frequencies;
+    for(auto& facet_stat : facetStates){
+        frequencies.emplace_back((double) (facet_stat.momentResults[0].hits.nbMCHit + facet_stat.momentResults[0].hits.nbDesorbed - facet_stat.momentResults[0].hits.nbAbsEquiv) / (double) (globalHits.globalHits.nbMCHit + globalHits.globalHits.nbDesorbed + globalHits.globalHits.nbAbsEquiv));
+    }
+
+    if(hitBattery.buffer_per_facet) {
+        int bat_n = 0;
+        for (auto &bat: hitBattery.rays) {
+            bat.Reserve(std::ceil(frequencies[bat_n] * hitBattery.maxSamples) * 1);
+            bat_n++;
+        }
+    }
+    else {
+        hitBattery.grays.Reserve(hitBattery.maxSamples);
+    }
+
+    hitBattery.initialized = true;
+
+    return 0;
+}
+
+int GlobalSimuState::StopBatteryChange() {
+
+    hitBattery.grays.Resize(0);
+    hitBattery.grays.Erase();
+
+    for(auto& bat : hitBattery.rays){
+        bat.Resize(0);
+        bat.Erase();
+    }
+    hitBattery.initialized = false;
+
+    return 0;
+}
+
+std::vector<TestRay> GlobalSimuState::PrepareHitBattery() {
+
+    if(!hitBattery.buffer_per_facet){
+        std::vector<TestRay> battery;
+
+            if(hitBattery.grays.Size() != 0)
+                std::sample(hitBattery.grays.data.begin(), hitBattery.grays.data.end(), std::back_inserter(battery),
+                        hitBattery.maxSamples, std::mt19937{std::random_device{}()});
+
+        return battery;
+    }
+
+    std::vector<double> frequencies;
+    for(auto& facet_stat : facetStates){
+        // per facet, calc a frequency as: (#hit + #des - #abs) / (#hit_g + #des_g + #abs_g)
+        // TODO: Check
+        frequencies.emplace_back((double) (facet_stat.momentResults[0].hits.nbMCHit + facet_stat.momentResults[0].hits.nbDesorbed - facet_stat.momentResults[0].hits.nbAbsEquiv) / (double) (globalHits.globalHits.nbMCHit + globalHits.globalHits.nbDesorbed + globalHits.globalHits.nbAbsEquiv));
+    }
+
+    std::vector<TestRay> battery;
+    battery.reserve(facetStates.size());
+
+    int bat_n = 0;
+    size_t count = 0;
+    for(auto& bat : hitBattery.rays){
+        //for(auto& hit : bat) {
+        if(bat.Size() == 0) {
+            bat_n++;
+            continue;
+        }
+        count += (int)std::ceil(frequencies[bat_n] * hitBattery.maxSamples) * 1;
+        bat_n++;
+    }
+    bat_n = 0;
+    double denum = 1.0;
+    if(count > hitBattery.maxSamples)
+            denum = (double) hitBattery.maxSamples / (double) count;
+    for(auto& bat : hitBattery.rays){
+        //for(auto& hit : bat) {
+        if(bat.Size() == 0) continue;
+        std::sample(bat.data.begin(), bat.data.end(), std::back_inserter(battery),
+                    (int)std::ceil(frequencies[bat_n] * hitBattery.maxSamples * denum), std::mt19937{std::random_device{}()});
+        bat_n++;
+            /*if (bat.size() < std::ceil(frequencies[hit.location] * HITCACHESAMPLE)) {
+                battery.emplace_back(hit.pos, hit.dir, hit.location);
+            }
+        }*/
+    }
+
+    Log::console_msg_master(3, "Adjusted sample size: {} (for {})\n", battery.size(), hitBattery.maxSamples);
+
+    return battery;
+}
+
+// Launch a ray from a source facet. The ray
+// particle.direction is chosen according to the desorption type.
+bool MolflowSimulationModel::StartFromSource(Ray& ray) {
+    bool found = false;
+    bool foundInMap = false;
+    bool reverse;
+    size_t mapPositionW, mapPositionH;
+    double srcRnd;
+    double sumA = 0.0;
+    size_t i = 0, j = 0;
+    int nbTry = 0;
+    if(ray.pay) ((RopePayload*)ray.pay)->lastNode = nullptr;
+
+    // Select source
+    srcRnd = ray.rng->rnd() * this->wp.totalDesorbedMolecules;
+
+    i = 0;
+    for(auto& fac : facets) { //Go through facets in a structure
+        auto f = std::dynamic_pointer_cast<MolflowSimFacet>(fac);
+        if (f->sh.desorbType != DES_NONE) { //there is some kind of outgassing
+            if (f->sh.useOutgassingFile) { //Using SynRad-generated outgassing map
+                if (f->sh.totalOutgassing > 0.0) {
+                    found = (srcRnd >= sumA) && (srcRnd < (sumA + wp.latestMoment * f->sh.totalOutgassing /
+                                                                  (1.38E-23 * f->sh.temperature)));
+                    if (found) {
+                        //look for exact position in map
+                        double rndRemainder = (srcRnd - sumA) / wp.latestMoment * (1.38E-23 *
+                                                                                          f->sh.temperature); //remainder, should be less than f->sh.totalOutgassing
+                        /*double sumB = 0.0;
+                        for (w = 0; w < f->sh.outgassingMapWidth && !foundInMap; w++) {
+                            for (h = 0; h < f->sh.outgassingMapHeight && !foundInMap; h++) {
+                                double cellOutgassing = f->outgassingMap[h*f->sh.outgassingMapWidth + w];
+                                if (cellOutgassing > 0.0) {
+                                    foundInMap = (rndRemainder >= sumB) && (rndRemainder < (sumB + cellOutgassing));
+                                    if (foundInMap) mapPositionW = w; mapPositionH = h;
+                                    sumB += cellOutgassing;
+                                }
+                            }
+                        }*/
+                        double lookupValue = rndRemainder;
+                        int outgLowerIndex = my_lower_bound(lookupValue,
+                                                            f->ogMap.outgassingMap_cdf); //returns line number AFTER WHICH LINE lookup value resides in ( -1 .. size-2 )
+                        outgLowerIndex++;
+                        mapPositionH = (size_t) ((double) outgLowerIndex / (double) f->ogMap.outgassingMapWidth);
+                        mapPositionW = (size_t) outgLowerIndex - mapPositionH * f->ogMap.outgassingMapWidth;
+                        foundInMap = true;
+                        /*if (!foundInMap) {
+                            SetErrorSub("Starting point not found in imported desorption map");
+                            return false;
+                        }*/
+                    }
+                    sumA += wp.latestMoment * f->sh.totalOutgassing / (1.38E-23 * f->sh.temperature);
+                }
+            } //end outgassing file block
+            else { //constant or time-dependent outgassing
+                double facetOutgassing =
+                        ((f->sh.outgassing_paramId >= 0)
+                         ? tdParams.IDs[f->sh.IDid].back().second
+                         : wp.latestMoment * f->sh.outgassing) / (1.38E-23 * f->sh.temperature);
+                found = (srcRnd >= sumA) && (srcRnd < (sumA + facetOutgassing));
+                sumA += facetOutgassing;
+            } //end constant or time-dependent outgassing block
+        } //end 'there is some kind of outgassing'
+        if (!found) i++;
+        if (f->sh.is2sided) reverse = ray.rng->rnd() > 0.5;
+        else reverse = false;
+
+        if(found) break;
+    } // facet loop
+
+    if (!found) {
+        std::cerr << "No starting point, aborting" << std::endl;
+        //SetErrorSub("No starting point, aborting");
+        return false;
+    }
+
+    SimulationFacet *src = this->facets[i].get();
+    ray.lastIntersected = src->globalId;
+    //distanceTraveled = 0.0;  //for mean free path calculations
+    //particle.time = desorptionStartTime + (desorptionStopTime - desorptionStartTime)*ray.rng->rnd();
+    /*ray.time = generationTime = Physics::GenerateDesorptionTime(this->tdParams.IDs, src, ray.rng->rnd(), this->wp.latestMoment);
+    ray.time = particle.time;
+    lastMomentIndex = 0;
+    if (this->wp.useMaxwellDistribution) velocity = Physics::GenerateRandomVelocity(this->tdParams.CDFs, src->sh.CDFid, ray.rng->rnd());
+    else
+        velocity =
+                145.469 * std::sqrt(src->sh.temperature / this->wp.gasMass);  //sqrt(8*R/PI/1000)=145.47
+
+    oriRatio = 1.0;
+    if (this->wp.enableDecay) { //decaying gas
+        expectedDecayMoment =
+                particle.time + this->wp.halfLife * 1.44269 * -log(ray.rng->rnd()); //1.44269=1/ln2
+        //Exponential distribution PDF: probability of 't' life = 1/TAU*exp(-t/TAU) where TAU = half_life/ln2
+        //Exponential distribution CDF: probability of life shorter than 't" = 1-exp(-t/TAU)
+        //Equation: ray.rng->rnd()=1-exp(-t/TAU)
+        //Solution: t=TAU*-log(1-ray.rng->rnd()) and 1-ray.rng->rnd()=ray.rng->rnd() therefore t=half_life/ln2*-log(ray.rng->rnd())
+    } else {
+        expectedDecayMoment = 1e100; //never decay
+    }
+    //temperature = src->sh.temperature; //Thermalize particle
+    nbBounces = 0;
+    distanceTraveled = 0;*/
+
+    found = false; //Starting point within facet
+
+    // Choose a starting point
+    while (!found && nbTry < 1000) {
+        double u, v;
+        if (foundInMap) {
+            auto& outgMap = ((MolflowSimFacet*)(src))->ogMap;
+            if (mapPositionW < (outgMap.outgassingMapWidth - 1)) {
+                //Somewhere in the middle of the facet
+                u = ((double) mapPositionW + ray.rng->rnd()) / outgMap.outgassingMapWidth_precise;
+            } else {
+                //Last element, prevent from going out of facet
+                u = ((double) mapPositionW +
+                        ray.rng->rnd() * (outgMap.outgassingMapWidth_precise - (outgMap.outgassingMapWidth - 1.0))) /
+                    outgMap.outgassingMapWidth_precise;
+            }
+            if (mapPositionH < (outgMap.outgassingMapHeight - 1)) {
+                //Somewhere in the middle of the facet
+                v = ((double) mapPositionH + ray.rng->rnd()) / outgMap.outgassingMapHeight_precise;
+            } else {
+                //Last element, prevent from going out of facet
+                v = ((double) mapPositionH +
+                        ray.rng->rnd() * (outgMap.outgassingMapHeight_precise - (outgMap.outgassingMapHeight - 1.0))) /
+                    outgMap.outgassingMapHeight_precise;
+            }
+        } else {
+            u = ray.rng->rnd();
+            v = ray.rng->rnd();
+        }
+        if (IsInFacet(*src, u, v)) {
+
+            // (U,V) -> (x,y,z)
+            ray.origin = src->sh.O + u * src->sh.U + v * src->sh.V;
+            found = true;
+
+        }
+        nbTry++;
+    }
+
+    if (!found) {
+        // Get the center, if the center is not included in the facet, a leak is generated.
+        if (foundInMap) {
+            auto& outgMap = ((MolflowSimFacet*)(src))->ogMap;
+            //double uLength = sqrt(pow(src->sh.U.x, 2) + pow(src->sh.U.y, 2) + pow(src->sh.U.z, 2));
+            //double vLength = sqrt(pow(src->sh.V.x, 2) + pow(src->sh.V.y, 2) + pow(src->sh.V.z, 2));
+            double u = ((double) mapPositionW + 0.5) / outgMap.outgassingMapWidth_precise;
+            double v = ((double) mapPositionH + 0.5) / outgMap.outgassingMapHeight_precise;
+            ray.origin = src->sh.O + u * src->sh.U + v * src->sh.V;
+        } else {
+            ray.origin = src->sh.center;
+        }
+
+    }
+
+    //See docs/theta_gen.png for further details on angular distribution generation
+    switch (src->sh.desorbType) {
+        case DES_UNIFORM:
+            ray.direction = PolarToCartesian(src->sh.nU, src->sh.nV, src->sh.N, std::acos(ray.rng->rnd()),
+                                             ray.rng->rnd() * 2.0 * PI,
+                                             reverse);
+            break;
+        case DES_NONE: //for file-based
+        case DES_COSINE:
+            ray.direction = PolarToCartesian(src->sh.nU, src->sh.nV, src->sh.N, std::acos(std::sqrt(ray.rng->rnd())),
+                                             ray.rng->rnd() * 2.0 * PI,
+                                             reverse);
+            break;
+        case DES_COSINE_N:
+            ray.direction = PolarToCartesian(src->sh.nU, src->sh.nV, src->sh.N, std::acos(
+                                                     std::pow(ray.rng->rnd(), 1.0 / (src->sh.desorbTypeN + 1.0))),
+                                             ray.rng->rnd() * 2.0 * PI, reverse);
+            break;
+        case DES_ANGLEMAP: {
+            auto[theta, thetaLowerIndex, thetaOvershoot] = AnglemapGeneration::GenerateThetaFromAngleMap(
+                    src->sh.anglemapParams, ((MolflowSimFacet*)(src))->angleMap, ray.rng->rnd());
+
+            auto phi = AnglemapGeneration::GeneratePhiFromAngleMap(thetaLowerIndex, thetaOvershoot,
+                                                                   src->sh.anglemapParams, ((MolflowSimFacet*)(src))->angleMap, ray.rng->rnd());
+
+            /*                                                      
+            //Debug
+            double phi;
+            thetaLowerIndex = 0;
+            thetaOvershoot = 0;
+            std::vector<double> phis;
+            for (double r = 0.0; r < 1.0; r += 0.001) {
+                 phi = AnglemapGeneration::GeneratePhiFromAngleMap(thetaLowerIndex, thetaOvershoot,
+                    src->sh.anglemapParams, src->angleMap,
+                    r);
+                phis.push_back(phi);
+            }
+            */
+
+            ray.direction = PolarToCartesian(src->sh.nU, src->sh.nV, src->sh.N, PI - theta, phi,
+                                             false); //angle map contains incident angle (between N and source dir) and theta is dir (between N and dest dir)
+
+        }
+    }
+
+    // Current structure
+    if (src->sh.superIdx == -1) {
+        return false;
+    }
+
+    ray.structure = src->sh.superIdx;
+
+    //teleportedFrom = -1;
+
+    found = false;
+    return true;
+}
+
+void MolflowSimulationModel::PerformBounce(Ray& ray, SimulationFacet *iFacet) {
+
+    bool revert = false;
+
+    // Handle super structure link facet. Can be
+    if (iFacet->sh.superDest) {
+        ray.structure = iFacet->sh.superDest - 1;
+        return;
+    }
+
+    // Handle volatile facet
+    if (iFacet->sh.isVolatile) {
+        if (iFacet->isReady) {
+            iFacet->isReady = false;
+        }
+        return;
+    }
+
+    if (iFacet->sh.is2sided) {
+        // We may need to revert normal in case of 2 sided hit
+        revert = Dot(ray.direction, iFacet->sh.N) > 0.0;
+    }
+
+    //Texture/Profile incoming hit
+
+
+    //Register (orthogonal) velocity
+    /*double ortVelocity =
+            velocity * std::abs(Dot(particle.direction, iFacet->sh.N));*/
+
+    /*iFacet->sh.tmpCounter.hit.nbMCHit++; //hit facet
+    iFacet->sh.tmpCounter.hit.sum_1_per_ort_velocity += 1.0 / ortVelocity;
+    iFacet->sh.tmpCounter.hit.sum_v_ort += (model->wp.useMaxwellDistribution ? 1.0 : 1.1781)*ortVelocity;*/
+/*
+    // Relaunch particle
+    UpdateVelocity(iFacet);
+    //Sojourn time
+    if (iFacet->sh.enableSojournTime) {
+        double A = exp(-iFacet->sh.sojournE / (8.31 * iFacet->sh.temperature));
+        particle.time += -log(randomGenerator.rnd()) / (A * iFacet->sh.sojournFreq);
+    }*/
+
+    if (iFacet->sh.reflection.diffusePart > 0.999999) { //Speedup branch for most common, diffuse case
+        ray.direction = PolarToCartesian(iFacet->sh.nU, iFacet->sh.nV, iFacet->sh.N, std::acos(std::sqrt(ray.rng->rnd())),
+                                         ray.rng->rnd() * 2.0 * PI,
+                                         revert);
+    } else {
+        double reflTypeRnd = ray.rng->rnd();
+        if (reflTypeRnd < iFacet->sh.reflection.diffusePart) {
+            //diffuse reflection
+            //See docs/theta_gen.png for further details on angular distribution generation
+            ray.direction = PolarToCartesian(iFacet->sh.nU, iFacet->sh.nV, iFacet->sh.N, std::acos(std::sqrt(ray.rng->rnd())),
+                                             ray.rng->rnd() * 2.0 * PI,
+                                             revert);
+        } else if (reflTypeRnd < (iFacet->sh.reflection.diffusePart + iFacet->sh.reflection.specularPart)) {
+            //specular reflection
+            auto[inTheta, inPhi] = CartesianToPolar(ray.direction, iFacet->sh.nU, iFacet->sh.nV,
+                                                    iFacet->sh.N);
+            ray.direction = PolarToCartesian(iFacet->sh.nU, iFacet->sh.nV, iFacet->sh.N, PI - inTheta, inPhi, false);
+
+        } else {
+            //Cos^N reflection
+            ray.direction = PolarToCartesian(iFacet->sh.nU, iFacet->sh.nV, iFacet->sh.N, std::acos(
+                                                     std::pow(ray.rng->rnd(), 1.0 / (iFacet->sh.reflection.cosineExponent + 1.0))),
+                                             ray.rng->rnd() * 2.0 * PI, revert);
+        }
+    }
+
+/*
+    if (iFacet->sh.isMoving) {
+        Physics::TreatMovingFacet(model, particle.origin, particle.direction, velocity);
+    }
+*/
+
+    //Texture/Profile outgoing particle
+    //Register outgoing velocity
+    //ortVelocity = velocity * std::abs(Dot(particle.direction, iFacet->sh.N));
+
+    /*iFacet->sh.tmpCounter.hit.sum_1_per_ort_velocity += 1.0 / ortVelocity;
+    iFacet->sh.tmpCounter.hit.sum_v_ort += (model->wp.useMaxwellDistribution ? 1.0 : 1.1781)*ortVelocity;*/
+
+    ray.lastIntersected = iFacet->globalId;
+    //nbPHit++;
 }

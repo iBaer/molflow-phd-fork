@@ -248,7 +248,7 @@ namespace {
 
             EXPECT_NO_THROW(simManager.StartSimulation());
 
-            Chronometer simTimer;
+            Chronometer simTimer(false);
             simTimer.Start();
             double elapsedTime;
 

@@ -200,7 +200,7 @@ int main(int argc, char** argv) {
         return 43;
     }
 
-    Chronometer simTimer;
+    Chronometer simTimer(false);
     simTimer.Start();
     double elapsedTime = 0.0;
 

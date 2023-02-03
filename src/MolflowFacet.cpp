@@ -490,58 +490,75 @@ void InterfaceFacet::LoadTXT(FileReader *file) {
 	// [1,2] => Partial opacity (2 sided)
 
 	// Read facet parameters from TXT format
-	sh.sticking = file->ReadDouble();
+
+	//Sticking or link target
+	sh.sticking = file->ReadDouble(); //sticking, or superdest id if opacity==0.0
+
+	//Opacity and 2-sidedness
 	double o = file->ReadDouble();
-	/*wp.area =*/ file->ReadDouble();
-	facetHitCache.nbDesorbed = (size_t)(file->ReadDouble() + 0.5);
-	facetHitCache.nbMCHit = (size_t)(file->ReadDouble() + 0.5);
-	facetHitCache.nbHitEquiv = static_cast<double>(facetHitCache.nbMCHit);
-	facetHitCache.nbAbsEquiv = (double)(size_t)(file->ReadDouble() + 0.5);
-	sh.desorbType = (int)(file->ReadDouble() + 0.5);
 
 	// Convert opacity
 	sh.profileType = PROFILE_NONE;
 	if (o < 0.0) {
 
-		sh.opacity = 0.0;
-		if (IsZero(o + 1.0)) {
+		sh.opacity = 1.0;
+		if (IsZero(o + 1.0)) { //o=-1
 			sh.profileType = PROFILE_U;
 			sh.is2sided = true;
 		}
-		if (IsZero(o + 2.0))
+		if (IsZero(o + 2.0)) //o=-2
 			sh.profileType = PROFILE_ANGULAR;
-		if (IsZero(o + 4.0)) {
+		if (IsZero(o + 4.0)) { //o=-4
 			sh.profileType = PROFILE_U;
 			sh.is2sided = false;
 		}
-
+		//o=-3 not implemented
 	}
 	else {
 
-		if (o >= 1.0000001) {
+		if (o >= 1.0000001) { //o: [1,2]
 			sh.opacity = o - 1.0;
 			sh.is2sided = true;
 		}
-		else
-
+		else //o:[0,1]
 			sh.opacity = o;
 	}
 
-	// Convert desorbType
-	switch (sh.desorbType) {
-	case 0:
-		sh.desorbType = DES_COSINE;
-		break;
-	case 1:
-		sh.desorbType = DES_UNIFORM;
-		break;
-	case 2:
-	case 3:
-	case 4:
-		sh.desorbType = sh.desorbType + 1; // cos^n
-		break;
+
+	if (IsTXTLinkFacet()) { //special way of secribing old links
+		sh.superDest = (int)(sh.sticking + 0.5); //0.99999->1, 1.00001->1
+		sh.sticking = 0.0;
 	}
-	ConvertOldDesorbType();
+
+	//Area
+	/*wp.area =*/ file->ReadDouble(); //Unused in modern Molflow
+
+	//Counters
+	facetHitCache.nbDesorbed = (size_t)(file->ReadDouble() + 0.5);
+	facetHitCache.nbMCHit = (size_t)(file->ReadDouble() + 0.5);
+	facetHitCache.nbHitEquiv = static_cast<double>(facetHitCache.nbMCHit);
+	facetHitCache.nbAbsEquiv = (double)(size_t)(file->ReadDouble() + 0.5);
+
+
+	//Desorption type
+	double des = file->ReadDouble();
+	if (IsEqual(-1.0, des)) { //Not desorbing
+		sh.desorbType = DES_NONE;
+		sh.outgassing = 0.0;
+	}
+	else if (IsEqual(0.0, des)) {
+		sh.desorbType = DES_COSINE;
+		sh.outgassing = .1; //default
+	}
+	else if (IsEqual(1.0, des)) {
+		sh.desorbType = DES_UNIFORM;
+		sh.outgassing = .1; //default
+	} else if (des>=2.0) {
+		sh.desorbType = DES_COSINE_N; // cos^n
+		sh.desorbTypeN = des - 1.0;
+		sh.outgassing = .1; //default
+	}
+
 	int reflectType = (int)(file->ReadDouble() + 0.5);
 
 	// Convert reflectType
@@ -563,14 +580,6 @@ void InterfaceFacet::LoadTXT(FileReader *file) {
 
 	file->ReadDouble(); // Unused
 
-	if (facetHitCache.nbDesorbed == 0)
-		sh.desorbType = DES_NONE;
-
-	if (IsTXTLinkFacet()) {
-		sh.superDest = (int)(sh.sticking + 0.5);
-		sh.sticking = 0;
-	}
-
 	UpdateFlags();
 
 }
@@ -581,28 +590,36 @@ void InterfaceFacet::LoadTXT(FileReader *file) {
 */
 void InterfaceFacet::SaveTXT(FileWriter *file) {
 
-	if (!sh.superDest)
+	//Sticking or link target
+	if (!sh.superDest) //Not a link, just write sticking
 		file->Write(sh.sticking, "\n");
-	else {
+	else { //old link format: opacity==0.0, sticking==destination id, starting from 1
 		file->Write((double)sh.superDest, "\n");
 		sh.opacity = 0.0;
 	}
 
+	//Opacity and 2-sidedness
 	if (sh.is2sided)
-		file->Write(sh.opacity + 1.0, "\n");
+		file->Write(sh.opacity + 1.0, "\n"); //[1,2]
 	else
-		file->Write(sh.opacity, "\n");
+		file->Write(sh.opacity, "\n"); //[0,1]
 
-	file->Write(sh.area, "\n");
+	//Area
+	file->Write(sh.area, "\n"); //Unused in modern Molflow
 
-	if (sh.desorbType != DES_NONE)
-		file->Write(1.0, "\n");
-	else
-		file->Write(0.0, "\n");
-	file->Write(0.0, "\n"); //nbMCHit
-	file->Write(0.0, "\n"); //nbAbsEquiv
+	//Counters
+	file->Write((double)facetHitCache.nbDesorbed, "\n"); //nbDes
+	file->Write(facetHitCache.nbHitEquiv, "\n"); //nbMCHit
+	file->Write(facetHitCache.nbAbsEquiv, "\n"); //nbAbsEquiv
 
-	file->Write(0.0, "\n"); //no desorption
+	//Desorption type
+	if (sh.desorbType == DES_COSINE)
+		file->Write(0.0, "\n"); //Cosine
+	else if (sh.desorbType == DES_UNIFORM)
+		file->Write(1.0, "\n"); //Uniform
+	else if (sh.desorbType == DES_COSINE_N && sh.desorbTypeN >= 2.0)
+		file->Write(sh.desorbTypeN + 1.0);
+	else file->Write(-1.0, "\n"); //No desorption or not supported exponent (<2.0)
 
 	if (sh.reflection.diffusePart > 0.99) {
 		file->Write((double)REFLECTION_DIFFUSE, "\n");

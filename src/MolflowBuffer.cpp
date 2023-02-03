@@ -22,7 +22,7 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include <limits>
 
 WorkerParams::WorkerParams(){
-    accel_type = BVH;
+    accel_type = KD;
     timeWindowSize = 1E-10; //Dirac-delta desorption pulse at t=0
     useMaxwellDistribution = true;
     calcConstantFlow = true;
@@ -42,6 +42,9 @@ OntheflySimulationParams::OntheflySimulationParams(){
     timeLimit = 0.0;
     logFacetId = std::numeric_limits<size_t>::max();
     logLimit = 0;
+
+    benchmarkADS = false;
+    raySampling = false;
 }
 
 void FacetHistogramBuffer::Resize(const HistogramParams& params){

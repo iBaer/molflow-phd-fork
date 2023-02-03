@@ -1310,7 +1310,7 @@ void MolflowGeometry::LoadSYN(FileReader *file, GLProgress *prg, int *version, W
 		int nbI = file->ReadInt();
 		if (nbI < 3) {
 			char errMsg[512];
-			sprintf(errMsg, "Facet %d has only %d vertices. ", i, nbI);
+			sprintf(errMsg, "Facet %d has only %d vertices. ", i+1, nbI);
 			throw Error(errMsg);
 		}
 		prg->SetProgress((float)i / sh.nbFacet);

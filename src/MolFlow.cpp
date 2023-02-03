@@ -28,6 +28,7 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include "GLApp/GLWindowManager.h"
 #include "Helper/MathTools.h"
 #include <Helper/FormatHelper.h>
+#include "ImguiWindow.h"
 
 #include "GLApp/GLMenuBar.h"
 #include "GLApp/GLButton.h"
@@ -1494,14 +1495,15 @@ void MolFlow::StartStopSimulation() {
 
 	// Frame rate measurement
 	// reset on start only
-	lastMeasTime = m_fTime;
 	if(worker.IsRunning()) {
 	    hps.clear();
         dps.clear();
         hps_runtotal.clear();
         dps_runtotal.clear();
     }
-	lastNbHit = worker.globalHitCache.globalHits.nbMCHit;
+
+    lastMeasTime = m_Timer.Elapsed();
+    lastNbHit = worker.globalHitCache.globalHits.nbMCHit;
 	lastNbDes = worker.globalHitCache.globalHits.nbDesorbed;
 
 	hps_runtotal.push(lastNbHit, lastMeasTime);
@@ -1595,9 +1597,10 @@ void MolFlow::ProcessMessage(GLComponent *src, int message)
 			break;
 
 		case MENU_EDIT_GLOBALSETTINGS:
-			if (!globalSettings) globalSettings = new GlobalSettings(&worker);
+		    if(imWnd) imWnd->ToggleGlobalSettings();
+			/*if (!globalSettings) globalSettings = new GlobalSettings(&worker);
 			globalSettings->Update();
-			globalSettings->SetVisible(true);
+			globalSettings->SetVisible(true);*/
 			break;
 
 		case MENU_TOOLS_PROFPLOTTER:
@@ -1873,12 +1876,13 @@ void MolFlow::ProcessMessage(GLComponent *src, int message)
 			}
 		}
 		else if (src == globalSettingsBtn) {
-			if (!globalSettings) globalSettings = new GlobalSettings(&worker);
+		    if(imWnd) imWnd->ToggleGlobalSettings();
+			/*if (!globalSettings) globalSettings = new GlobalSettings(&worker);
 			if (!globalSettings->IsVisible()) {
 				globalSettings->Update();
 				globalSettings->SetVisible(true);
 			}
-			else globalSettings->SetVisible(false);
+			else globalSettings->SetVisible(false);*/
 		}
 		else if (src == facetAdvParamsBtn) {
 			if (!facetAdvParams) {
@@ -1933,6 +1937,7 @@ void MolFlow::BuildPipe(double ratio, int steps) {
 		worker.ResetMoments();
 		worker.model->wp.globalHistogramParams = HistogramParams();
         ResetSimulation(false);
+        geom->InitializeGeometry();
     }
 	catch(const std::exception &e) {
 		GLMessageBox::Display((char *)e.what(), "Error building pipe", GLDLG_OK, GLDLG_ICONERROR);
@@ -2422,7 +2427,13 @@ void MolFlow::calcSticking() {
 void MolFlow::CrashHandler(const std::exception &e) {
 	char tmp[1024];
 	sprintf(tmp, "Well, that's embarrassing. Molflow crashed and will exit now.\nBefore that, an autosave will be attempted.\nHere is the error info:\n\n%s", e.what());
-	GLMessageBox::Display(tmp, "Main crash handler", GLDLG_OK, GLDGL_ICONDEAD);
+    if(imWnd) {
+        imWnd->renderSingle();
+        imWnd->destruct();
+        delete imWnd;
+        imWnd = nullptr;
+    }
+    GLMessageBox::Display(tmp, "Main crash handler", GLDLG_OK, GLDGL_ICONDEAD);
 	try {
 		if (AutoSave(true))
 			GLMessageBox::Display("Good news, autosave worked!", "Main crash handler", GLDLG_OK, GLDGL_ICONDEAD);

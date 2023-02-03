@@ -17,7 +17,6 @@ stages:
   - prepare
   - build
   - build-artifact
-  - optional-artifact
   - build-test
   - test
   - benchmark
@@ -62,6 +61,8 @@ prepare_job_notag:
 
 upload-job:
   stage: upload
+  when: manual
+  allow_failure: false
   image: registry.gitlab.com/gitlab-ci-utils/curl-jq:latest #curl + zip
   rules:
     - if: $CI_COMMIT_TAG
@@ -85,16 +86,16 @@ release_job:
       links:
         - name: 'Windows binary'
           url: '${PACKAGE_REGISTRY_URL}/${TAG_VERSION_NUMBER}/${APP_NAME}_win${TAG_SUFFIX}.zip'
-        - name: 'macOS (Intel) binary'
+        - name: 'macOS (Intel) binary' #might not exist
           url: '${PACKAGE_REGISTRY_URL}/${TAG_VERSION_NUMBER}/${APP_NAME}_mac${TAG_SUFFIX}.zip'
-        - name: 'macOS (ARM) binary'
+        - name: 'macOS (ARM) binary' #might not exist
           url: '${PACKAGE_REGISTRY_URL}/${TAG_VERSION_NUMBER}/${APP_NAME}_mac_arm${TAG_SUFFIX}.zip'
         - name: 'Ubuntu (Debian) binary'
           url: '${PACKAGE_REGISTRY_URL}/${TAG_VERSION_NUMBER}/${APP_NAME}_debian${TAG_SUFFIX}.zip'
         - name: 'CentOS (Fedora) binary'
           url: '${PACKAGE_REGISTRY_URL}/${TAG_VERSION_NUMBER}/${APP_NAME}_fedora${TAG_SUFFIX}.zip'
 
-build-windows-master:
+build-windows:
   stage: build
   before_script:
     - echo "Building Windows $CI_COMMIT_BRANCH"
@@ -119,10 +120,10 @@ build-windows-master:
   tags:
     - windows
 
-build-windows-test:
+build-test-windows:
   stage: build-test
   needs:
-    - job: build-windows-master
+    - job: build-windows
   before_script:
     - echo "Building Windows Test $CI_COMMIT_BRANCH"
   script:
@@ -196,7 +197,7 @@ build-windows-test:
   after_script:
     - echo "Finished"
 
-build-debian-master:
+build-debian:
   extends: .build-unix
   variables:
     OS_NAME: "debian"
@@ -204,7 +205,7 @@ build-debian-master:
   tags:
     - debian
 
-build-fedora-master:
+build-fedora:
   extends: .build-unix
   variables:
     OS_NAME: "fedora"
@@ -212,7 +213,7 @@ build-fedora-master:
   tags:
     - fedora
 
-build-macos-master:
+build-macos:
   extends: .build-unix
   variables:
     OS_NAME: "mac"
@@ -226,9 +227,9 @@ build-macos-master:
       allow_failure: true
     - if: '$CI_COMMIT_TAG'
       when: manual
-      allow_failure: false
+      allow_failure: true
 
-build-macos-arm-master:
+build-macos-arm:
   extends: .build-unix
   variables:
     OS_NAME: "mac_arm"
@@ -242,64 +243,53 @@ build-macos-arm-master:
       allow_failure: true
     - if: '$CI_COMMIT_TAG'
       when: manual
-      allow_failure: false
+      allow_failure: true
 
-build-debian-test:
+build-test-debian:
   extends: .build-test-unix
   needs:
-    - job: build-debian-master
+    - job: build-debian
   variables:
     OS_NAME: "debian"
     OS_FULL_NAME: "linux_debian"
   tags:
     - debian
 
-build-fedora-test:
+build-test-fedora:
   extends: .build-test-unix
   needs:
-    - job: build-fedora-master
+    - job: build-fedora
   variables:
     OS_NAME: "fedora"
     OS_FULL_NAME: "linux_debian"
   tags:
     - fedora
 
-build-macos-test:
+build-test-macos:
   extends: .build-test-unix
   needs:
-    - job: build-macos-master
+    - job: build-macos
   variables:
     OS_NAME: "mac"
     OS_FULL_NAME: "mac"
   tags:
     - macos
-  rules:
-    - if: '$CI_COMMIT_BRANCH'
-      when: manual
-      allow_failure: true
-    - if: '$CI_COMMIT_TAG'
-      when: manual
-      allow_failure: false
+  when: manual
 
-build-macos-arm-test:
+build-test-macos-arm:
   extends: .build-test-unix
   needs:
-    - job: build-macos-arm-master
+    - job: build-macos-arm
   variables:
     OS_NAME: "mac_arm"
     OS_FULL_NAME: "mac_arm"
   tags:
     - macos-arm
-  rules:
-    - if: '$CI_COMMIT_BRANCH'
-      when: manual
-      allow_failure: true
-    - if: '$CI_COMMIT_TAG'
-      when: manual
-      allow_failure: false
+  when: manual
 
 .test-unix:
   stage: test
+  allow_failure: true
   before_script:
     - echo "Testing $OS_NAME $CI_COMMIT_BRANCH $CI_COMMIT_REF_NAME $CI_PIPELINE_ID"
   script:
@@ -322,7 +312,7 @@ test-debian:
   variables:
     OS_NAME: "debian"
   needs:
-    - job: build-debian-test
+    - job: build-test-debian
   tags:
     - debian
 
@@ -331,7 +321,7 @@ test-fedora:
   variables:
     OS_NAME: "fedora"
   needs:
-    - job: build-fedora-test
+    - job: build-test-fedora
   tags:
     - fedora
 
@@ -339,22 +329,25 @@ test-macos:
   extends: .test-unix
   variables:
     OS_NAME: "mac"
+  needs:
+    - job: build-test-macos
   tags:
     - macos
-  when: manual
-  allow_failure: true
+
 
 test-macos-arm:
   extends: .test-unix
   variables:
     OS_NAME: "mac_arm"
+  needs:
+    - job: build-test-macos-arm
   tags:
     - macos-arm
-  when: manual
-  allow_failure: true
+
 
 test-windows:
   stage: test
+  allow_failure: true
   before_script:
     - Write-Host "Testing Windows $CI_COMMIT_BRANCH"
   script:
@@ -373,12 +366,13 @@ test-windows:
       junit: .\report.xml
     expire_in: 4 weeks
   needs:
-    - job: build-windows-test
+    - job: build-test-windows
   tags:
     - windows
 
 .benchmark-unix:
   stage: benchmark
+  allow_failure: true
   before_script:
     - echo "Benchmarking $OS_NAME $CI_COMMIT_BRANCH $CI_COMMIT_REF_NAME $CI_PIPELINE_ID"
     - mkdir -p ~/$APP_NAME_CAPS'_CI/PerfoTestResults/'$CI_COMMIT_BRANCH'/'
@@ -437,6 +431,7 @@ benchmark-macos-arm:
 
 benchmark-windows:
   stage: benchmark
+  allow_failure: true
   before_script:
     - Write-Host "Benchmarking Windows $CI_COMMIT_BRANCH"
     - mkdir -Force -P ("C:\" + ($APP_NAME_CAPS) + "_CI\PerfoTestResults\" + ($CI_COMMIT_BRANCH) + "\")
@@ -506,7 +501,6 @@ benchmark-windows:
     - echo $CI_COMMIT_TAG
     - echo $CI_COMMIT_REF_NAME
     - echo ~/$APP_NAME_CAPS'_CI/'$FNAME'/'
-    - ls ~/
     - ls ~/$APP_NAME_CAPS'_CI/'
     - ls ~/$APP_NAME_CAPS'_CI/'$FNAME'/'
     - cp -r ~/$APP_NAME_CAPS'_CI/'$FNAME'/'* ./$APP_NAME'_'$OS_NAME$TAG_SUFFIX || true
@@ -520,151 +514,78 @@ benchmark-windows:
     paths:
       - ./${APP_NAME}_${OS_NAME}${TAG_SUFFIX}
 
-.artifact-prop-master:
+.artifact-prop:
   artifacts:
     expire_in: 8 weeks
   rules:
-    - if: '($CI_COMMIT_BRANCH == "master" && $OS_NAME != "mac" && $OS_NAME != "mac_arm" )'
+    - if: '($CI_COMMIT_BRANCH && ($OS_NAME != "mac" && $OS_NAME != "mac_arm"))'
       when: always
-    - if: '($CI_COMMIT_BRANCH == "master" && ($OS_NAME == "mac" || $OS_NAME == "mac_arm"))'
-      when: manual
-      allow_failure: true
-
-.artifact-prop-branch:
-  artifacts:
-    expire_in: 2 weeks
-  rules:
-    - if: '($CI_COMMIT_BRANCH != "master" && $CI_COMMIT_TAG == null && $OS_NAME != "mac" && $OS_NAME != "mac_arm")'
-      when: always
-    - if: '($CI_COMMIT_BRANCH != "master" && $CI_COMMIT_TAG == null && ($OS_NAME == "mac" || $OS_NAME == "mac_arm"))'
-      when: manual
+    - if: '($CI_COMMIT_BRANCH && ($OS_NAME == "mac" || $OS_NAME == "mac_arm"))'
       allow_failure: true
 
 .artifact-prop-tags:
   artifacts:
     expire_in: 5 yrs
   rules:
-    - if: '($CI_COMMIT_TAG)'
+    - if: '($CI_COMMIT_TAG && ($OS_NAME != "mac" && $OS_NAME != "mac_arm"))'
       when: always
+    - if: '($CI_COMMIT_TAG && ($OS_NAME == "mac" || $OS_NAME == "mac_arm"))'
+      allow_failure: true
 
-build-artifact-windows-master:
-  extends:
-    - .artifact-windows
-    - .artifact-prop-master
-  needs:
-    - job: build-windows-master
-  tags:
-    - windows
-
-build-artifact-debian-master:
+build-artifact-debian:
   extends:
     - .artifact-unix
-    - .artifact-prop-master
+    - .artifact-prop
   variables:
     OS_NAME: "debian"
   needs:
-    - job: build-debian-master
+    - job: build-debian
   tags:
     - debian
 
-build-artifact-fedora-master:
+build-artifact-fedora:
   extends:
     - .artifact-unix
-    - .artifact-prop-master
+    - .artifact-prop
   variables:
     OS_NAME: "fedora"
   needs:
-    - job: build-fedora-master
+    - job: build-fedora
   tags:
     - fedora
 
-build-artifact-macos-master:
+build-artifact-macos:
   extends:
     - .artifact-unix
-    - .artifact-prop-master
-  stage: optional-artifact
+    - .artifact-prop
+  stage: build-artifact
   needs:
-    - job: build-macos-master
+    - job: build-macos
   variables:
     OS_NAME: "mac"
   tags:
     - macos
+  allow_failure: true
 
-build-artifact-macos-arm-master:
+build-artifact-macos-arm:
   extends:
     - .artifact-unix
-    - .artifact-prop-master
-  stage: optional-artifact
+    - .artifact-prop
+  stage: build-artifact
   needs:
-    - job: build-macos-arm-master
+    - job: build-macos-arm
   variables:
     OS_NAME: "mac_arm"
   tags:
     - macos-arm
+  allow_failure: true
 
-build-artifact-windows-branch:
+build-artifact-windows:
   extends:
     - .artifact-windows
-    - .artifact-prop-branch
+    - .artifact-prop
   needs:
-    - job: build-windows-master
-  tags:
-    - windows
-
-build-artifact-debian-branch:
-  extends:
-    - .artifact-unix
-    - .artifact-prop-branch
-  variables:
-    OS_NAME: "debian"
-  needs:
-    - job: build-debian-master
-  tags:
-    - debian
-
-build-artifact-fedora-branch:
-  extends:
-    - .artifact-unix
-    - .artifact-prop-branch
-  variables:
-    OS_NAME: "fedora"
-  needs:
-    - job: build-fedora-master
-  tags:
-    - fedora
-
-build-artifact-macos-branch:
-  variables:
-    OS_NAME: "mac"
-  extends:
-    - .artifact-unix
-    - .artifact-prop-branch
-  needs:
-    - job: build-macos-master
-  stage: optional-artifact
-  tags:
-    - macos
-
-build-artifact-macos-arm-branch:
-  variables:
-    OS_NAME: "mac_arm"
-  extends:
-    - .artifact-unix
-    - .artifact-prop-branch
-  needs:
-    - job: build-macos-arm-master
-  stage: optional-artifact
-  tags:
-    - macos-arm
-
-build-artifact-windows-tags:
-  extends:
-    - .artifact-windows
-    - .artifact-prop-tags
-  needs:
-    - job: build-windows-master
-    - job: prepare_job
-      artifacts: true
+    - job: build-windows
   tags:
     - windows
 
@@ -673,7 +594,7 @@ build-artifact-debian-tags:
     - .artifact-unix
     - .artifact-prop-tags
   needs:
-    - job: build-debian-master
+    - job: build-debian
     - job: prepare_job
       artifacts: true
   variables:
@@ -686,7 +607,7 @@ build-artifact-fedora-tags:
     - .artifact-unix
     - .artifact-prop-tags
   needs:
-    - job: build-fedora-master
+    - job: build-fedora
     - job: prepare_job
       artifacts: true
   variables:
@@ -701,11 +622,13 @@ build-artifact-macos-tags:
     - .artifact-unix
     - .artifact-prop-tags
   needs:
-    - job: build-macos-master
+    - job: build-macos
     - job: prepare_job
       artifacts: true
+  stage: build-artifact
   tags:
     - macos
+  allow_failure: true
 
 build-artifact-macos-arm-tags:
   variables:
@@ -714,8 +637,21 @@ build-artifact-macos-arm-tags:
     - .artifact-unix
     - .artifact-prop-tags
   needs:
-    - job: build-macos-arm-master
+    - job: build-macos-arm
+    - job: prepare_job
+      artifacts: true
+  stage: build-artifact
+  tags:
+    - macos-arm
+  allow_failure: true
+
+build-artifact-windows-tags:
+  extends:
+    - .artifact-windows
+    - .artifact-prop-tags
+  needs:
+    - job: build-windows
     - job: prepare_job
       artifacts: true
   tags:
-    - macos-arm
+    - windows

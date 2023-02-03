@@ -306,7 +306,7 @@ bool WriterXML::SaveSimulationState(xml_document &saveDoc, std::shared_ptr<Molfl
             xml_node hitCacheNode = globalNode.append_child("Hit_Cache");
             hitCacheNode.append_attribute("nb") = globState.globalHits.hitCacheSize;
 
-            for (size_t i = 0; i < globState.globalHits.hitCacheSize; i++) {
+            for (size_t i = 0; i < std::max(globState.globalHits.hitCacheSize,HITCACHESIZE); i++) {
                 xml_node newHit = hitCacheNode.append_child("Hit");
                 newHit.append_attribute("id") = i;
                 newHit.append_attribute("posX") = globState.globalHits.hitCache[i].pos.x;

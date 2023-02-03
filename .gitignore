@@ -58,6 +58,7 @@ CMake/cmake-*
 !/src_shared/
 !/src_shared/**/
 !/tests/
+!/algobench/
 !/precomp_obj/
 !/molflow_tests/
 !/lib_external/

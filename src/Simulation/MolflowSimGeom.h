@@ -133,8 +133,8 @@ public:
     int PrepareToRun() override;
 
     //! Construct acceleration structure with a given splitting method
-    int BuildAccelStructure(GlobalSimuState *globState, AccelType accel_type, BVHAccel::SplitMethod split,
-                            int maxPrimsInNode) override;
+    int BuildAccelStructure(GlobalSimuState *globState, AccelType accel_type,
+                            int split, int bvh_width, double hybridWeight) override;
 
     //int InitialiseFacets();
 
@@ -191,6 +191,15 @@ public:
     TimeDependentParamters tdParams;
 
     void BuildPrisma(double L, double R, double angle, double s, int step);
+
+    int CalculateKDStats(const std::vector<TestRay>& hits, int& isect_cost);
+
+
+
+    std::vector<double> ComputeHitChances(const std::vector<TestRay>& battery, const std::vector<std::shared_ptr<Facet>>& primitives);
+    int ComputeHitStats(const std::vector<TestRay>& battery) override;
+    bool StartFromSource(Ray& ray) override;
+    void PerformBounce(Ray& ray, SimulationFacet *iFacet) override;
 };
 
 /*!
@@ -285,6 +294,13 @@ public:
     static std::tuple<int, int, int>
     Compare(const GlobalSimuState &lhsGlobHit, const GlobalSimuState &rhsGlobHit, double globThreshold,
             double locThreshold);
+
+    int UpdateBatteryFrequencies();
+    int UnlimitBattery();
+    int StopBatteryChange();
+    std::vector<TestRay> PrepareHitBattery();
+
+    SampleBattery hitBattery;       // hits
 
 #if defined(MOLFLOW)
     GlobalHitBuffer globalHits;

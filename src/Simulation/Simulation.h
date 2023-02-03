@@ -42,7 +42,7 @@ public:
 
     Simulation();
     Simulation(Simulation&& o) noexcept ;
-    virtual ~Simulation() = default;
+    ~Simulation() override = default;
 
     std::pair<int, std::optional<std::string>> SanityCheckModel(bool strictCheck) override;
     void ClearSimulation() override;
@@ -72,5 +72,8 @@ public:
     std::vector<MFSim::Particle> particles;
     mutable std::timed_mutex tMutex;
 
+    void FindBestADS();
+
+    bool RunParallel(size_t nSteps);
 };
 // -- Methods ---------------------------------------------------

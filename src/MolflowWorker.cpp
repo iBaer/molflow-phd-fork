@@ -101,7 +101,7 @@ extern SynRad*mApp;
 /**
 * \brief Default constructor for a worker
 */
-Worker::Worker() : simManager(0) {
+Worker::Worker() : simManager(0), simuTimer(false) {
 
     model = std::make_shared<MolflowSimulationModel>();
     //Molflow specific
@@ -610,6 +610,9 @@ void Worker::LoadGeometry(const std::string &fileName, bool insert, bool newStr)
                 SAFE_DELETE(f);
                 //RealReload();
                 fullFileName = fileName;
+                RealReload();
+                SendToHitBuffer(); //Global hit counters and hit/leak cache
+                SendFacetHitCounts(); // From facetHitCache to dpHit's const.flow counter
             } else { //insert
 
                 geom->InsertTXT(f, progressDlg, newStr);
@@ -884,7 +887,7 @@ void Worker::LoadGeometry(const std::string &fileName, bool insert, bool newStr)
                     if (future.get()) {
                         progressDlg->SetVisible(false);
                         SAFE_DELETE(progressDlg);
-                        throw;
+                        throw std::runtime_error("There was an error loading this file, check console for details.");
                     }
                 }
                 geom->InitOldStruct(mf_model.get());
@@ -1580,8 +1583,18 @@ void Worker::Start() {
     try {
         simManager.ForwardGlobalCounter(&globState, &particleLog);
 
-        if (simManager.StartSimulation()) {
-            throw std::logic_error("Processes are already done!");
+        retryStart:
+        try {
+            if (simManager.StartSimulation()) {
+                throw std::logic_error("Processes are already done!");
+            }
+        }
+        catch (std::exception& err){
+            int ok = GLMessageBox::Display((char *)err.what(),"Error (Start)",GLDLG_OK,GLDLG_ICONERROR);
+            if(ok)
+                goto retryStart;
+            simManager.StopSimulation();
+            throw std::runtime_error(err.what());
         }
     }
     catch (const std::exception &e) {
