@@ -232,6 +232,16 @@ void diffTimeBins(const std::vector<size_t> &tb_l,
         fmt::print(fg(fmt::color::red), "Total diff: {}\n", diff_c);
 }
 
+size_t getBinCount(const std::vector<size_t> &bins) {
+    size_t count = 0;
+
+    for (size_t i = 0; i < bins.size(); i++) {
+        count += bins[i];
+    }
+
+    return count;
+}
+
 std::vector<size_t>
 runVectorBinarySearch(const std::vector<Moment> &intervalMoments,
                       std::vector<size_t> &timeBins) {
@@ -654,6 +664,50 @@ int main(int argc, char **argv) {
             testCases_um.emplace_back(uMoments);
         }
     }
+    else{
+        // Test cases for loaded input file
+        uMoments = std::vector<UserMoment>{
+                {"1.0e-6, 1.0e-6,9.1e-6",     1.0e-6},
+                {"1.0e-5, 1.0e-6,9.1e-5",     1.0e-6},
+                {"1.0e-4, 1.0e-5,9.1e-4",     1.0e-6},
+                {"1.0e-3, 1.0e-4,9.1e-3",     1.0e-6}
+        };
+        testCases_um.emplace_back(uMoments);
+
+        uMoments = std::vector<UserMoment>{
+                {"1.0e-6, 1.0e-9, 9.9e-6",     1.0e-9},
+                {"1.0e-5, 1.0e-8, 9.9e-5",     1.0e-8},
+                {"1.0e-4, 1.0e-7, 9.9e-4",     1.0e-7},
+                {"1.0e-3, 1.0e-6, 9.9e-3",     1.0e-6}
+        };
+        testCases_um.emplace_back(uMoments);
+
+        uMoments = std::vector<UserMoment>{
+                {"1.0e-6, 1.0e-11, 9.9e-6",    1.0e-11},
+                {"1.0e-5, 1.0e-10, 9.9e-5",    1.0e-10},
+                {"1.0e-4, 1.0e-9, 9.9e-4",     1.0e-9},
+                {"1.0e-3, 1.0e-8, 9.9e-3",     1.0e-8}
+        };
+        testCases_um.emplace_back(uMoments);
+
+        uMoments = std::vector<UserMoment>{
+                {"1.0e-6, 1.0e-11, 9.9e-6",    1.0e-13},
+                {"1.0e-5, 1.0e-10, 9.9e-5",    1.0e-12},
+                {"1.0e-4, 1.0e-9, 9.9e-4",     1.0e-11},
+                {"1.0e-3, 1.0e-8, 9.9e-3",     1.0e-10}
+        };
+        testCases_um.emplace_back(uMoments);
+
+        uMoments = std::vector<UserMoment>{
+                {"1.0e-6, 1.0e-8, 9.9e-3",    1.0e-8}
+        };
+        testCases_um.emplace_back(uMoments);
+
+        uMoments = std::vector<UserMoment>{
+                {"1.0e-6, 1.0e-8, 9.9e-3",    1.0e-11}
+        };
+        testCases_um.emplace_back(uMoments);
+    }
     /*std::vector<UserMoment> uMoments{
             {"1.0e-13,1.0e-5,0.001", 1.0e-5}
     };*/
@@ -697,6 +751,8 @@ int main(int argc, char **argv) {
         // 1. Vector binary search
         std::vector<size_t> timeBins_test1 =
                 runVectorBinarySearch(intervalMoments, timeBins);
+
+        fmt::print("Test case has around: {} / {} bin hits\n", getBinCount(timeBins_test1),  Settings::time_points.size());
         //diffTimeBins(timeBins_test1, timeBins_test1);
         std::vector<size_t> timeBins_test2 =
                 runVectorQuadSearch(intervalMoments, timeBins);

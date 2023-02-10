@@ -105,6 +105,7 @@ add_subdirectory(src_shared EXCLUDE_FROM_ALL)
 add_subdirectory(CMake/molflow_cli)
 add_subdirectory(CMake/molflow_sim)
 add_subdirectory(algobench)
+add_subdirectory(src/TimeDependent)
 #ENDIF()
 
 if(NOT NO_INTERFACE)
