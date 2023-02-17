@@ -42,6 +42,11 @@ set(CMAKE_VERBOSE_MAKEFILE OFF)
 # Defines Flags for Windows and Linux. #
 ########################################
 
+if(COMPUTE_WITH_TRI)
+    MESSAGE("Simulation with Triangle Primitives...")
+    ADD_DEFINITIONS(-DCOMPUTE_WITH_TRI)
+endif()
+
 if(USE_OLD_BVH)
     MESSAGE("Simulation with old BVH...")
     ADD_DEFINITIONS(-DUSE_OLD_BVH)

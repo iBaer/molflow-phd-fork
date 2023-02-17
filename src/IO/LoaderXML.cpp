@@ -128,11 +128,13 @@ int LoaderXML::LoadGeometry(std::string inputFileName, std::shared_ptr<Simulatio
     size_t countPoly = 0;
 
     for(auto& prim : model->primitives){
+#if defined(COMPUTE_WITH_TRI)
         if(prim->indices.size() == 3){
             std::dynamic_pointer_cast<TriangleFacet>(prim)->vertices3 = &model->vertices3;
             ++countTri;
         }
         else
+#endif
             ++countPoly;
     }
 
@@ -698,11 +700,14 @@ std::shared_ptr<GeomPrimitive> LoaderXML::LoadFacet(pugi::xml_node facetNode, Su
             idx++;
         }
 
+#if defined(COMPUTE_WITH_TRI)
         if(nIndices == 3){
             prim = std::make_shared<TriangleFacet>();
             std::dynamic_pointer_cast<TriangleFacet>(prim)->indices.swap(indices);
         }
-        else {
+        else
+#endif
+        {
             prim = std::make_shared<Facet>();
             std::dynamic_pointer_cast<Facet>(prim)->indices.swap(indices);
         }

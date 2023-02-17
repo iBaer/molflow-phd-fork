@@ -1312,13 +1312,16 @@ bool Worker::InterfaceGeomToSimModel() {
             sFac.angleMap.pdf = angleMapVector;
             sFac.textureCellIncrements = textIncVector;
 
+#if defined(COMPUTE_WITH_TRI)
             if(facet->indices.size() == 3){
                 auto triPrim = std::make_shared<TriangleFacet>();
                 triPrim->vertices2 = facet->vertices2;
                 triPrim->sh = facet->sh;
                 prim = triPrim;
             }
-            else{
+            else
+#endif
+{
                 auto polyPrim = std::make_shared<Facet>(facet->indices.size());
                 polyPrim->vertices2 = facet->vertices2;
                 polyPrim->sh = facet->sh;

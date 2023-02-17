@@ -371,7 +371,7 @@ int SimulationModel::InitialiseFacets() {
         auto& facet = *f;
         // Main facet params
         // Current facet
-        //SubprocessFacet *f = model->facets[i];
+        //SubprocessFacet *f = facets[i];
         CalculateFacetParams(&facet);
 
         // Set some texture parameters
@@ -387,6 +387,112 @@ int SimulationModel::InitialiseFacets() {
             facet.sh.texWidth_precise = 0.0;
             facet.sh.texHeight_precise = 0.0;
         }
+
+#if defined(COMPUTE_WITH_TRI)
+        if(facet.sh.nbIndex == 3){
+            {
+                // texture coords for all triangles even without textures
+                double u = 0.0;
+                double v = 0.0;
+                if (facet.sh.V.x * facet.sh.U.y != 0.0) {
+                    double det = facet.sh.U.x * facet.sh.V.y -
+                                 facet.sh.U.y *
+                                 facet.sh.V.x; // TODO: Pre calculate
+
+                    // Vert 1
+                    Vector3d b = vertices3[facet.indices[0]] -
+                                 facet.sh.O;
+                    double detU = b.x * facet.sh.V.y - b.y * facet.sh.V.x;
+                    double detV = facet.sh.U.x * b.y - facet.sh.U.y * b.x;
+
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[0] = Vector2d(u, v);
+
+                    // Vert 2
+                    b = vertices3[facet.indices[1]] -
+                        facet.sh.O;
+                    detU = b.x * facet.sh.V.y - b.y * facet.sh.V.x;
+                    detV = facet.sh.U.x * b.y - facet.sh.U.y * b.x;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[1] = Vector2d(u, v);
+
+                    // Vert 3
+                    b = vertices3[facet.indices[2]] -
+                        facet.sh.O;
+                    detU = b.x * facet.sh.V.y - b.y * facet.sh.V.x;
+                    detV = facet.sh.U.x * b.y - facet.sh.U.y * b.x;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[2] = Vector2d(u, v);
+                } else if (facet.sh.V.y * facet.sh.U.z != 0.0) {
+                    double det = facet.sh.U.y * facet.sh.V.z -
+                                 facet.sh.U.z *
+                                 facet.sh.V.y; // TODO: Pre calculate
+
+                    // Vert 1
+                    Vector3d b = vertices3[facet.indices[0]] -
+                                 facet.sh.O;
+                    double detU = b.y * facet.sh.V.z - b.z * facet.sh.V.y;
+                    double detV = facet.sh.U.y * b.z - facet.sh.U.z * b.y;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[0] = Vector2d(u, v);
+
+                    // Vert 2
+                    b = vertices3[facet.indices[1]] -
+                        facet.sh.O;
+                    detU = b.y * facet.sh.V.z - b.z * facet.sh.V.y;
+                    detV = facet.sh.U.y * b.z - facet.sh.U.z * b.y;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[1] = Vector2d(u, v);
+
+                    // Vert 3
+                    b = vertices3[facet.indices[2]] -
+                        facet.sh.O;
+                    detU = b.y * facet.sh.V.z - b.z * facet.sh.V.y;
+                    detV = facet.sh.U.y * b.z - facet.sh.U.z * b.y;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[2] = Vector2d(u, v);
+                } else if (facet.sh.V.z * facet.sh.U.x != 0.0) {
+                    double det = facet.sh.U.z * facet.sh.V.x -
+                                 facet.sh.U.x *
+                                 facet.sh.V.z; // TODO: Pre calculate
+
+                    // Vert 1
+                    Vector3d b = vertices3[facet.indices[0]] -
+                                 facet.sh.O;
+                    double detU = b.z * facet.sh.V.x - b.x * facet.sh.V.z;
+                    double detV = facet.sh.U.z * b.x - facet.sh.U.x * b.z;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[0] = Vector2d(u, v);
+
+                    // Vert 2
+                    b = vertices3[facet.indices[1]] -
+                        facet.sh.O;
+                    detU = b.z * facet.sh.V.x - b.x * facet.sh.V.z;
+                    detV = facet.sh.U.z * b.x - facet.sh.U.x * b.z;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[1] = Vector2d(u, v);
+
+                    // Vert 3
+
+                    b = vertices3[facet.indices[2]] -
+                        facet.sh.O;
+                    detU = b.z * facet.sh.V.x - b.x * facet.sh.V.z;
+                    detV = facet.sh.U.z * b.x - facet.sh.U.x * b.z;
+                    v = (detV) / (det);
+                    u = (detU) / det;
+                    std::dynamic_pointer_cast<TriangleFacet>(f)->texCoord[2] = Vector2d(u, v);
+                }
+            }
+        }
+#endif
     }
 
     m.unlock();
