@@ -16,6 +16,9 @@
 
 using namespace MFTD;
 
+const int totalRuns = 5u;
+std::vector<std::vector<double>> benchmark_times;
+
 // typedef std::tuple<double,double,double,double> MomentInterval; // begin,
 // interval, end, timewindow
 namespace DefaultVar {
@@ -242,18 +245,46 @@ size_t getBinCount(const std::vector<size_t> &bins) {
     return count;
 }
 
-std::vector<size_t>
-runVectorBinarySearch(const std::vector<Moment> &intervalMoments,
-                      std::vector<size_t> &timeBins) {
+double runAlgorithm(const std::string& alg_name , int (*alg)(double, const std::vector<Moment> &), const std::vector<Moment> &intervalMoments,
+                  std::vector<size_t> &timeBins, size_t totalRuns = 1) {
     // 1. Vector binary search
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
         initTimeBins(timeBins, intervalMoments.size());
         fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Binary search \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
+        for (auto moment: Settings::time_points) {
+            int ind = alg(moment, intervalMoments);
+            if (ind >= 0)
+                ++timeBins[ind];
+        }
+        time.Stop();
+        fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Binary search\n",
+                   time.ElapsedMs());
+avg_time += time.ElapsedMs();
+
+        printTimeBins(timeBins);
+    }
+
+    return avg_time / totalRuns;
+}
+
+double runVectorBinarySearch(const std::vector<Moment> &intervalMoments,
+                      std::vector<size_t> &timeBins) {
+    // 1. Vector binary search
+    Chronometer time;
+    double avg_time = 0.0;
+    for (int runNb = 0; runNb < totalRuns; ++runNb) {
+        time.ReInit();
+        time.Start();
+        initTimeBins(timeBins, intervalMoments.size());
+        fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Binary search \n",
+                   time.ElapsedMs());
+avg_time += time.ElapsedMs();
         for (auto moment: Settings::time_points) {
             int ind = LookupMomentIndex(moment, intervalMoments);
             if (ind >= 0)
@@ -262,18 +293,18 @@ runVectorBinarySearch(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Binary search\n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
 
         printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorQuadSearch(const std::vector<Moment> &intervalMoments,
+double runVectorQuadSearch(const std::vector<Moment> &intervalMoments,
                     std::vector<size_t> &timeBins) {
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
@@ -287,23 +318,24 @@ runVectorQuadSearch(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Quad search\n", time.ElapsedMs());
 
-        printTimeBins(timeBins);
+        
+avg_time += time.ElapsedMs();printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorInterpSearch(const std::vector<Moment> &intervalMoments,
+double runVectorInterpSearch(const std::vector<Moment> &intervalMoments,
                       std::vector<size_t> &timeBins) {
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
         initTimeBins(timeBins, intervalMoments.size());
         fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Interp search\n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         for (auto moment: Settings::time_points) {
             int ind = interpolationSearch(moment, intervalMoments);
             if (ind >= 0)
@@ -312,24 +344,25 @@ runVectorInterpSearch(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Interp search\n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
 
         printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorInterpSearch_indexed(const std::vector<Moment> &intervalMoments,
+double runVectorInterpSearch_indexed(const std::vector<Moment> &intervalMoments,
                       std::vector<size_t> &timeBins) {
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
         initTimeBins(timeBins, intervalMoments.size());
         fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Interp search -- Index \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         for (const auto &particleTrace: Settings::time_points_wbreak) {
             for (const auto moment: particleTrace) {
@@ -344,18 +377,18 @@ runVectorInterpSearch_indexed(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Interp search -- Index \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
 
         printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorJumpSearch(const std::vector<Moment> &intervalMoments,
+double runVectorJumpSearch(const std::vector<Moment> &intervalMoments,
                     std::vector<size_t> &timeBins) {
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
@@ -381,17 +414,18 @@ runVectorJumpSearch(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Jump search \n", time.ElapsedMs());
 
-        printTimeBins(timeBins);
+        
+avg_time += time.ElapsedMs();
+printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorCalcSearch(const std::vector<Moment> &intervalMoments,
+double runVectorCalcSearch(const std::vector<Moment> &intervalMoments,
                     std::vector<size_t> &timeBins) {
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
@@ -420,24 +454,26 @@ runVectorCalcSearch(const std::vector<Moment> &intervalMoments,
 
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Calc search \n", time.ElapsedMs());
+        avg_time += time.ElapsedMs();
+
         printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorBinarySearch_indexed(const std::vector<Moment> &intervalMoments,
+double runVectorBinarySearch_indexed(const std::vector<Moment> &intervalMoments,
                               std::vector<size_t> &timeBins) {
     // 1. Vector binary search
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
         initTimeBins(timeBins, intervalMoments.size());
         fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Binary search -- Index \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         for (const auto &particleTrace: Settings::time_points_wbreak) {
             for (const auto moment: particleTrace) {
@@ -452,24 +488,25 @@ runVectorBinarySearch_indexed(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Binary search -- Index \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorJumpSearch_indexed(const std::vector<Moment> &intervalMoments,
+double runVectorJumpSearch_indexed(const std::vector<Moment> &intervalMoments,
                             std::vector<size_t> &timeBins) {
     // 1. Vector binary search
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
         initTimeBins(timeBins, intervalMoments.size());
         fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Jump search -- Index \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         for (const auto &particleTrace: Settings::time_points_wbreak) {
             for (const auto moment: particleTrace) {
@@ -484,24 +521,25 @@ runVectorJumpSearch_indexed(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Jump search -- Index \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         printTimeBins(timeBins);
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
-std::vector<size_t>
-runVectorBinarySearch_indexed_v2(const std::vector<Moment> &intervalMoments,
+double runVectorBinarySearch_indexed_v2(const std::vector<Moment> &intervalMoments,
                                  std::vector<size_t> &timeBins) {
     // 1. Vector binary search
     Chronometer time;
-    const int totalRuns = 1;
+    double avg_time = 0.0;
     for (int runNb = 0; runNb < totalRuns; ++runNb) {
         time.ReInit();
         time.Start();
         initTimeBins(timeBins, intervalMoments.size());
         fmt::print(fg(fmt::color::light_golden_rod_yellow), " [START][{:8.2f}ms] Vector -- Binary search -- Index2 \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         size_t desNb = 0;
         const size_t total_events = Settings::time_points.size();
@@ -524,6 +562,7 @@ runVectorBinarySearch_indexed_v2(const std::vector<Moment> &intervalMoments,
         time.Stop();
         fmt::print(fg(fmt::color::light_salmon), " [ END ][{:8.2f}ms] Vector -- Binary search -- Index2 \n",
                    time.ElapsedMs());
+avg_time += time.ElapsedMs();
         printTimeBins(timeBins);
 
 #if defined(DEBUG)
@@ -563,7 +602,7 @@ runVectorBinarySearch_indexed_v2(const std::vector<Moment> &intervalMoments,
 #endif
     }
 
-    return timeBins;
+    return avg_time / totalRuns;
 }
 
 int main(int argc, char **argv) {
@@ -725,6 +764,7 @@ int main(int argc, char **argv) {
             {"3660,0.06,30000", 0.06}
     };*/
 
+    benchmark_times.resize(testCases_um.size());
     int tc = 1;
     for(auto& test_case : testCases_um) {
         fmt::print(fg(fmt::color::alice_blue), "Starting test #{}\n", tc);
@@ -749,23 +789,18 @@ int main(int argc, char **argv) {
         }
 
         // 1. Vector binary search
-        std::vector<size_t> timeBins_test1 =
-                runVectorBinarySearch(intervalMoments, timeBins);
-
+        benchmark_times[tc-1].emplace_back(runVectorBinarySearch(intervalMoments, timeBins));
+        std::vector<size_t> timeBins_test1 = timeBins;
         fmt::print("Test case has around: {} / {} bin hits\n", getBinCount(timeBins_test1),  Settings::time_points.size());
-        //diffTimeBins(timeBins_test1, timeBins_test1);
-        std::vector<size_t> timeBins_test2 =
-                runVectorQuadSearch(intervalMoments, timeBins);
-        diffTimeBins(timeBins_test1, timeBins_test2);
-        std::vector<size_t> timeBins_test3 =
-                runVectorInterpSearch(intervalMoments, timeBins);
-        diffTimeBins(timeBins_test1, timeBins_test3);
-        std::vector<size_t> timeBins_test4 =
-                runVectorJumpSearch(intervalMoments, timeBins);
-        diffTimeBins(timeBins_test1, timeBins_test4);
-        std::vector<size_t> timeBins_test5 =
-                runVectorCalcSearch(intervalMoments, timeBins);
-        diffTimeBins(timeBins_test1, timeBins_test5);
+        //diffTimeBins(timeBins_test1, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorQuadSearch(intervalMoments, timeBins));
+        diffTimeBins(timeBins_test1, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorInterpSearch(intervalMoments, timeBins));
+        diffTimeBins(timeBins_test1, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorJumpSearch(intervalMoments, timeBins));
+        diffTimeBins(timeBins_test1, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorCalcSearch(intervalMoments, timeBins));
+        diffTimeBins(timeBins_test1, timeBins);
         // Free some memory
         Settings::time_points.clear();
         Settings::time_points_wbreak.clear();
@@ -778,15 +813,13 @@ int main(int argc, char **argv) {
                          Settings::time_points_wbreak, DefaultVar::seed);
         }
 
-        std::vector<size_t> timeBins_test6 =
-                runVectorBinarySearch_indexed(intervalMoments, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorBinarySearch_indexed(intervalMoments, timeBins));
+        std::vector<size_t> timeBins_test6 = timeBins;
         //diffTimeBins(timeBins_test1, timeBins_test6);
-        std::vector<size_t> timeBins_test7 =
-                runVectorJumpSearch_indexed(intervalMoments, timeBins);
-        diffTimeBins(timeBins_test6, timeBins_test7);
-        std::vector<size_t> timeBins_test8 =
-                runVectorInterpSearch_indexed(intervalMoments, timeBins);
-        diffTimeBins(timeBins_test6, timeBins_test8);
+        benchmark_times[tc-1].emplace_back(runVectorJumpSearch_indexed(intervalMoments, timeBins));
+        diffTimeBins(timeBins_test6, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorInterpSearch_indexed(intervalMoments, timeBins));
+        diffTimeBins(timeBins_test6, timeBins);
 
         // Free some memory
         Settings::time_points_wbreak.clear();
@@ -807,12 +840,30 @@ int main(int argc, char **argv) {
             fmt::print("Break {} : {} : {:e}\n",i,Settings::breakPoints[i],
            Settings::time_points[i]);
 #endif
-        runVectorBinarySearch_indexed_v2(intervalMoments, timeBins);
+        benchmark_times[tc-1].emplace_back(runVectorBinarySearch_indexed_v2(intervalMoments, timeBins));
 
         Settings::time_points.clear();
         Settings::breakPoints.clear();
         fmt::print(fg(fmt::color::light_golden_rod_yellow), "Finished test #{}\n", tc);
         tc++;
+    }
+
+    for(int i = 0; i < benchmark_times.size(); i++) { // test case
+        fmt::print(fg(fmt::color::light_golden_rod_yellow), "TC #{} | ", i);
+        for(int j = 0; j < benchmark_times[i].size(); j++) { // algo
+            fmt::print("{:03.2f}ms | ", benchmark_times[i][j]);
+        }
+        fmt::print("\n");
+
+    }
+
+
+    for(int j = 0; j < benchmark_times[0].size(); j++) { // algofmt::print(fg(fmt::color::light_golden_rod_yellow), "TC #{} | ", i);
+        fmt::print(fg(fmt::color::indian_red), "Alg. #{} | ", j);
+        for(int i = 0; i < benchmark_times.size(); i++) { // algo
+            fmt::print("{:03.2f}ms | ", benchmark_times[i][j]);
+        }
+        fmt::print("\n");
     }
 
     return 0;
