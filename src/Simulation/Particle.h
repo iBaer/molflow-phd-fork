@@ -25,6 +25,7 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include "MolflowSimGeom.h"
 #include "SimulationUnit.h"
 #include <Random.h>
+#include <set>
 
 struct SimulationFacetTempVar;
 
@@ -109,6 +110,9 @@ namespace MFSim {
         MolflowSimulationModel *model;
         std::vector<SimulationFacet*> transparentHitBuffer; //Storing this buffer simulation-wide is cheaper than recreating it at every Intersect() call
         std::vector <SimulationFacetTempVar> tmpFacetVars; //One per SimulationFacet, for intersect routine
+
+        std::set<int> newtrans;
+        std::set<size_t> alreadyHit; // account for duplicate hits on kdtree
 
         bool allQuit{false}; // To be called by EmergencyExit when thread/simulation will not stop by itself
 

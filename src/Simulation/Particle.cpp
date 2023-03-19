@@ -487,8 +487,8 @@ bool Particle::SimulationMCStep(size_t nbStep, size_t threadNum, size_t remainin
 #endif
 
                     if(model->wp.accel_type==1) { // todo: remove; this wrap is just to debug
-                        static std::set<int> newtrans;
-                        static std::set<size_t> alreadyHit; // account for duplicate hits on kdtree
+                        /*static std::set<int> newtrans;
+                        static std::set<size_t> alreadyHit; // account for duplicate hits on kdtree*/
 
                         for (auto &hit: particle.transparentHits) {
                             if (particle.tMax <= hit.hit.colDistTranspPass) {

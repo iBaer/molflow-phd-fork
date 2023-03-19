@@ -167,6 +167,14 @@ std::pair<int, std::optional<std::string>> Simulation::SanityCheckModel(bool str
     std::string errLog = "[Error Log on Check]\n";
     int errorsOnCheck = 0;
 
+    if (!model) {
+        errLog.append("Model not set\n");
+        errorsOnCheck++;
+        Log::console_error("{}", errLog);
+
+        return std::make_pair(errorsOnCheck, (errorsOnCheck > 0 ? std::make_optional(errLog) : std::nullopt)); // 0 = all ok
+    }
+
     if (!model->initialized) {
         errLog.append("Model not initialized\n");
         errorsOnCheck++;

@@ -18,6 +18,7 @@
 #include <SettingsIO.h>
 #include <fmt/core.h>
 #include <CLI11/CLI11.hpp>
+#include "AppSettings.h"
 
 // helper class for flexible argument initialization
 class CharPVec {
@@ -96,6 +97,9 @@ int main(int argc, char **argv) {
 
         CLI11_PARSE(app, argc, argv);
     }
+
+    Settings::verbosity = 0;
+
     fmt::print("Hybrid weight for : {}\n", hybrid_weight);
 
     if(!test_case_file.empty()){
