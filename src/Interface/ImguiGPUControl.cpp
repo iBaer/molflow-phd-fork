@@ -59,10 +59,10 @@ void ShowGPUWindow(MolFlow *mApp, bool *show_gpu, std::shared_ptr<flowgpu::Molfl
             reinterpret_cast<bool *>(&gpu_settings.randomNumberMethod)); // Edit bools storing our window
     simChanged |= ImGui::InputInt("RNG cycles",reinterpret_cast<int *>( &gpu_settings.cyclesRNG));
     simChanged |= ImGui::InputInt("Recursive depth",reinterpret_cast<int *>( &gpu_settings.recursiveMaxDepth));
-    simChanged |= ImGui::InputFloat("Offset Magnitude Normal", &gpu_settings.offsetMagnitudeN, 0.00f, 0.0f, "%g");
-    simChanged |= ImGui::InputFloat("Offset Magnitude Center", &gpu_settings.offsetMagnitude, 0.00f, 0.0f, "%g");
+    simChanged |= ImGui::SliderFloat("Offset Magnitude Normal", &gpu_settings.offsetMagnitudeN, 0.00f, 0.0f, "%g");
+    simChanged |= ImGui::SliderFloat("Offset Magnitude Center", &gpu_settings.offsetMagnitude, 0.00f, 0.0f, "%g");
 
-    simChanged |= ImGui::InputFloat("Gas molecular mass (g/mol)", &gpu_settings.gasMass, 0.00f, 0.0f, "%g");
+    simChanged |= ImGui::SliderFloat("Gas molecular mass (g/mol)", &gpu_settings.gasMass, 0.00f, 0.0f, "%g");
     simChanged |= ImGui::Checkbox(
             "Maxwell Boltzmann Distribution",
             reinterpret_cast<bool *>(&gpu_settings.useMaxwellDistribution));

@@ -39,6 +39,7 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 #include "Helper/OutputHelper.h"
 #include "Helper/Chronometer.h"
 #include "GPUSettings.h"
+#include <omp.h>
 
 SimulationControllerGPU::SimulationControllerGPU(size_t parentPID, size_t procIdx, size_t nbThreads,
                                                  SimulationUnit *simUnit,
@@ -101,7 +102,7 @@ bool SimulationControllerGPU::runLoop() {
     double printEveryNMinutes = 0.0; // timeLimit / -i or direct by -k
     double timeLimit = 0.0;
     bool silentMode = false;
-
+    constexpr double runForMS = 1000.0;
     uint64_t printPerNRuns = std::min(static_cast<uint64_t>(printPerN), static_cast<uint64_t>(nbLoops/nPrints)); // prevent n%0 operation
     printPerNRuns = std::max(printPerNRuns, static_cast<uint64_t>(1));
 
@@ -134,7 +135,12 @@ bool SimulationControllerGPU::runLoop() {
         do {
             RunSimulation();  // Run during 1 sec
             timeEnd = run_chrono.ElapsedMs();
-        } while(timeEnd - t_run_start < 1000.0);
+            ++loopN;
+        } while(timeEnd - t_run_start < runForMS && (model->ontheflyParams.desorptionLimit != 0 && refreshForStop >= loopN)); // run loop for a particular amount of time, to reduce overhead
+
+        size_t timeOut = lastUpdateOk ? 0 : 100; //ms
+
+        lastUpdateOk = UpdateHits(*this, *this->simulation->globState); // Update hit with 20ms timeout. If fails, probably an other subprocess is updating, so we'll keep calculating and try it later (latest when the simulation is stopped).
 
         size_t localDesLimit = 0;
         if(simulation->model->otfParams.desorptionLimit > 0){
@@ -144,19 +150,23 @@ bool SimulationControllerGPU::runLoop() {
         }
         if(model->ontheflyParams.desorptionLimit != 0) {
             // add remaining steps to current loop count, this is the new approx. stop until desorption limit is reached
-            refreshForStop = loopN + RemainingStepsUntilStop();
-            std::cout << " Stopping at " << loopN << " / " << refreshForStop << std::endl;
+            refreshForStop = globFigures.runCount + RemainingStepsUntilStop();
+            Log::console_msg_master(3, " Stopping at {} / {} with {} x {} x {} des\n",
+                                    globFigures.runCount, refreshForStop, globFigures.total_des, figures.total_des, simulation->globState->globalHits.globalHits.nbDesorbed);
         }
-
-        size_t timeOut = lastUpdateOk ? 0 : 100; //ms
-
-        lastUpdateOk = UpdateHits(*this, *this->simulation->globState); // Update hit with 20ms timeout. If fails, probably an other subprocess is updating, so we'll keep calculating and try it later (latest when the simulation is stopped).
 
         timeLoopStart = run_chrono.ElapsedMs();
 
         //printf("[%zu] PUP: %lu , %lu , %lu\n",threadNum, desorptions,localDesLimit, particle->tmpState.globalHits.globalHits.hit.nbDesorbed);
-        eos = simEos || (this->model->ontheflyParams.timeLimit != 0 ? timeEnd-timeStart >= this->model->ontheflyParams.timeLimit : false) || (procInfo->masterCmd != COMMAND_START)/* || (procInfo->subProcInfo[threadNum].slaveState == PROCESS_ERROR)*/;
+        const bool eos_time = this->model->ontheflyParams.timeLimit != 0 &&
+                              timeEnd - timeStart >= this->model->ontheflyParams.timeLimit * 1000;
+        const bool eos_comm = (procInfo->masterCmd != COMMAND_START);
+        const bool eos_des = this->model->ontheflyParams.desorptionLimit != 0 &&
+                this->simulation->globState->globalHits.globalHits.nbDesorbed >= this->model->ontheflyParams.desorptionLimit * 1000;
+        eos = simEos || eos_time || eos_comm || eos_des;
     } while (!eos);
+
+    hasEnded = true;
 
     /*procInfo->RemoveAsActive(threadNum);
     if (!lastUpdateOk) {
@@ -166,6 +176,8 @@ bool SimulationControllerGPU::runLoop() {
                              20000); // Update hit with 20ms timeout. If fails, probably an other subprocess is updating, so we'll keep calculating and try it later (latest when the simulation is stopped).)
     }*/
 
+    Log::console_msg_master(3, " EOS at {} / {} with {} x {} x {} des\n",
+                            globFigures.runCount, refreshForStop, globFigures.total_des, figures.total_des, simulation->globState->globalHits.globalHits.nbDesorbed);
 
     return simEos;
 }
@@ -297,11 +309,13 @@ int SimulationControllerGPU::Start() {
             }
         }
         else {
-            if (GetLocalState() != PROCESS_ERROR) {
-                // Time limit reached
-                ClearCommand();
-                SetState(PROCESS_DONE, GetSimuStatus());
-                DEBUG_PRINT("[%d] COMMAND: PROCESS_DONE (Stopped)\n", prIdx);
+            if (simulation->model->otfParams.desorptionLimit > 0) {
+                if (simulation->totalDesorbed >=
+                    simulation->model->otfParams.desorptionLimit /
+                    simulation->model->otfParams.nbProcess) {
+                    ClearCommand();
+                    SetState(PROCESS_DONE, GetSimuStatus());
+                }
             }
         }
     } else {
@@ -403,8 +417,11 @@ uint64_t SimulationControllerGPU::RunSimulation() {
     try {
         optixHandle->launchMolecules();
         ++figures.runCount;
-        if (!endCalled && !hasEnded)
+        ++globFigures.runCount;
+        if (!endCalled && !hasEnded) {
             ++figures.runCountNoEnd;
+            ++globFigures.runCountNoEnd;
+        }
     } catch (std::runtime_error &e) {
         std::cout << MF_TERMINAL_RED << "FATAL ERROR: " << e.what()
                   << MF_TERMINAL_DEFAULT << std::endl;
@@ -418,14 +435,15 @@ uint64_t SimulationControllerGPU::RunSimulation() {
  */
 int SimulationControllerGPU::RemainingStepsUntilStop() {
     uint64_t diffDes = 0u;
-    if (model->ontheflyParams.desorptionLimit > figures.total_des)
-        diffDes = model->ontheflyParams.desorptionLimit - figures.total_des;
+    if (model->ontheflyParams.desorptionLimit > globFigures.total_des)
+        diffDes = model->ontheflyParams.desorptionLimit - globFigures.total_des;
     size_t remainingDes = diffDes;
 
     // Minimum 100 steps, to not spam single steps on desorption stop
     // TODO : find more elegant way
-    size_t remainingSteps = 100;
-    if (diffDes >= 1) remainingSteps = std::ceil(0.9 * remainingDes / figures.desPerRun);
+    size_t remainingSteps = remainingDes / (settings->kernelDimensions[0] * settings->kernelDimensions[1]);
+    if (diffDes > 0 && globFigures.desPerRun > 0)
+        remainingSteps = std::ceil(0.9 * remainingDes / globFigures.desPerRun);
     if (endCalled) {
         // TODO: replace  kernelDimensions[0]*kernelDimensions[1]
         if (diffDes >= 0)
@@ -451,6 +469,26 @@ void SimulationControllerGPU::AllowNewParticles() {
     optixHandle->downloadDataFromDevice(data.get()); //download tmp counters
     for (auto &particle: data->hitData) {
         particle.hasToTerminate = 0;
+    }
+    optixHandle->updateHostData(data.get());
+
+    hasEnded = false;
+#endif
+
+    return;
+}
+
+/**
+ * Stop new particles, e.g. if new desorption limit (if any) is reached
+ */
+void SimulationControllerGPU::StopNewParticles() {
+#ifdef WITHDESORPEXIT
+    if (this->model->ontheflyParams.desorptionLimit > 0 &&
+        figures.total_des >= this->model->ontheflyParams.desorptionLimit)
+        return;
+    optixHandle->downloadDataFromDevice(data.get()); //download tmp counters
+    for (auto &particle: data->hitData) {
+        particle.hasToTerminate = 1;
     }
     optixHandle->updateHostData(data.get());
 
@@ -496,10 +534,10 @@ void SimulationControllerGPU::CheckAndBlockDesorption_exact(double threshold) {
 #ifdef WITHDESORPEXIT
     size_t nThreads = settings->kernelDimensions[0] * settings->kernelDimensions[1];
     if (this->model->ontheflyParams.desorptionLimit > 0) {
-        if (figures.total_des + nThreads >= this->model->ontheflyParams.desorptionLimit) {
+        if (globFigures.total_des + nThreads >= this->model->ontheflyParams.desorptionLimit) {
             size_t desToStop =
-                    (model->ontheflyParams.desorptionLimit > figures.total_des) ?
-                    (int64_t) model->ontheflyParams.desorptionLimit - figures.total_des : 0;
+                    (model->ontheflyParams.desorptionLimit > globFigures.total_des) ?
+                    (int64_t) model->ontheflyParams.desorptionLimit - globFigures.total_des : 0;
             //endCalled = false;
             size_t nbExit = 0;
             size_t nbTerm = 0;
@@ -544,7 +582,7 @@ void SimulationControllerGPU::CheckAndBlockDesorption_exact(double threshold) {
             }
 
             if (nbExit) {
-                figures.exitCount += nbExit - prevExitCount;
+                globFigures.exitCount += nbExit - prevExitCount;
                 prevExitCount = nbExit;
             }
             if (endCalled) optixHandle->updateHostData(data.get());
@@ -620,13 +658,15 @@ double SimulationControllerGPU::GetTransProb() {
 
 //! Do various calculations for runtime statistics
 void SimulationControllerGPU::CalcRuntimeFigures() {
+    globFigures.runCount = figures.runCount;
+    globFigures.runCountNoEnd = figures.runCountNoEnd;
     figures.desPerRun = (double) (figures.total_des - figures.ndes_stop) / figures.runCountNoEnd;
+    globFigures.desPerRun = (double) (globFigures.total_des - globFigures.ndes_stop) / globFigures.runCountNoEnd;
     figures.desPerRun_stop = (double) (figures.exitCount) / (figures.runCount - figures.runCountNoEnd);
-/*
-    printf(" DPR --> %lf [%llu / %u]\n", figures.desPerRun, figures.total_des - figures.ndes_stop, figures.runCountNoEnd);
+    /*printf(" DPR --> %lf [%llu / %u]\n", figures.desPerRun, figures.total_des - figures.ndes_stop, figures.runCountNoEnd);
+    printf("gDPR --> %lf [%llu / %u]\n", globFigures.desPerRun, globFigures.total_des - globFigures.ndes_stop, globFigures.runCountNoEnd);
     printf("sDPR --> %lf [%llu / %u]\n", (double) figures.exitCount / (figures.runCount-figures.runCountNoEnd), figures.ndes_stop, figures.runCount-figures.runCountNoEnd);
 */
-
 }
 
 /**
@@ -640,7 +680,7 @@ unsigned long long int SimulationControllerGPU::GetSimulationData(bool silent) {
     bool printDataParent = false & !silent;
     bool printCounters = false & !silent;
 #ifdef WITHDESORPEXIT
-    printCounters = true;
+    //printCounters = true;
 #endif
     try {
         optixHandle->downloadDataFromDevice(data.get()); //download tmp counters
@@ -1229,13 +1269,20 @@ void SimulationControllerGPU::PrintData() {
 /*! Update global runtime figures with downloaded data */
 void SimulationControllerGPU::UpdateGlobalFigures() {
     uint64_t prevDes = globFigures.total_des;
+    unsigned int num_threads = omp_get_max_threads();
+    uint64_t total_counter = 0, total_des = 0, total_absd = 0;
 
+#pragma omp parallel for reduction(+:total_counter,total_des,total_absd)
     for (unsigned int i = 0; i < globalCounter->facetHitCounters.size(); i++) {
-        globFigures.total_counter += globalCounter->facetHitCounters[i].nbMCHit; // let misses count as 0 (-1+1)
+        total_counter += globalCounter->facetHitCounters[i].nbMCHit; // let misses count as 0 (-1+1)
         //if(endCalled) figures.ndes_stop += globalCounter->facetHitCounters[i].nbDesorbed;
-        globFigures.total_des += globalCounter->facetHitCounters[i].nbDesorbed; // let misses count as 0 (-1+1)
-        globFigures.total_absd += globalCounter->facetHitCounters[i].nbAbsEquiv; // let misses count as 0 (-1+1)
+        total_des += globalCounter->facetHitCounters[i].nbDesorbed; // let misses count as 0 (-1+1)
+        total_absd += globalCounter->facetHitCounters[i].nbAbsEquiv; // let misses count as 0 (-1+1)
     }
+
+    globFigures.total_counter += total_counter;
+    globFigures.total_des += total_des;
+    globFigures.total_absd += total_absd;
     if (endCalled)
         globFigures.ndes_stop += globFigures.total_des - prevDes;
 }
@@ -1261,10 +1308,10 @@ void SimulationControllerGPU::PrintTotalCounters() {
     if (endCalled)
         figures.ndes_stop += figures.total_des - prevDes;
 
-    Log::console_msg(3, " total hits >>> {}", figures.total_counter);
-    Log::console_msg(3, " __ total  des >>> {} ({})", figures.total_des, figures.ndes_stop);
-    Log::console_msg(3, " __ total  abs >>> {}", static_cast<unsigned long long int>(figures.total_absd));
-    Log::console_msg(3, " __ total miss >>> {} -- miss/hit ratio: {}\n", figures.total_leak,
+    Log::console_msg(5, " Step: hits >>> {}", figures.total_counter);
+    Log::console_msg(5, " __  des >>> {} ({})", figures.total_des, figures.ndes_stop);
+    Log::console_msg(5, " __  abs >>> {}", static_cast<unsigned long long int>(figures.total_absd));
+    Log::console_msg(5, " __  miss >>> {} -- miss/hit ratio: {}\n", figures.total_leak,
                static_cast<double>(figures.total_leak) /
                static_cast<double>(figures.total_counter));
 }

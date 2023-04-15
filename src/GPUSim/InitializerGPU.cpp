@@ -39,7 +39,7 @@ namespace Settings {
     std::string paramFile;
     std::vector<std::string> paramSweep;
     flowgpu::MolflowGPUSettings simParams;
-    unsigned int kernelDimensions[2];
+    unsigned int kernelDimensions[2]{1920,1};
 }
 
 void initDefaultSettings() {

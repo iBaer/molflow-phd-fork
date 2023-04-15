@@ -67,6 +67,7 @@ public:
     int ResetSimulation(bool softReset);
     int ResetGlobalCounter();
     void AllowNewParticles();
+    void StopNewParticles();
     void CheckAndBlockDesorption();
     void CheckAndBlockDesorption_exact(double threshold);
 
@@ -78,8 +79,8 @@ public:
     double GetTransProb();
     bool runLoop();
 
-    RuntimeFigures figures;
-    RuntimeFigures globFigures;
+    RuntimeFigures figures; //! these are reset once fetched, to get results per fetch (second, 100k des, etc.)
+    RuntimeFigures globFigures; //! these are quasi equivalents to global hit results on the simulation side
 
     bool hasEnded{false};
     bool endCalled{false};

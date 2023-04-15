@@ -864,6 +864,8 @@ namespace flowgpu {
 
         settings->gasMass = simModel.wp.gasMass;
         settings->useMaxwellDistribution = simModel.wp.useMaxwellDistribution;
+        model->ontheflyParams = simModel.otfParams;
+
         model->geomProperties = simModel.sh;
         vertices3d.reserve(simModel.vertices3.size());
         for (auto &vert: simModel.vertices3) {
