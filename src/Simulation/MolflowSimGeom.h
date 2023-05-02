@@ -129,7 +129,12 @@ public:
         return *this;
     };
 
-    //! Do calculations necessary before launching simulation
+    int AnalyzeGeom() override {
+        SimulationModel::AnalyzeGeom();
+        std::cout << "Number of moments: " << tdParams.moments.size() << std::endl;
+        return 0;
+    }
+        //! Do calculations necessary before launching simulation
     int PrepareToRun() override;
 
     //! Construct acceleration structure with a given splitting method

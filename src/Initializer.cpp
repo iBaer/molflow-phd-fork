@@ -108,6 +108,8 @@ int Initializer::parseCommands(int argc, char **argv) {
                    "Will write a CSV file containing all facet details including physical quantities");
     app.add_flag("--writeFacetQuantities", SettingsIO::outputFacetQuantities,
                    "Will write a CSV file containing all physical quantities for each facet");
+    app.add_flag("--analyzeScene", SettingsIO::analyzeScene,
+                 "Will analyze the scene, print output and quit");
 
     app.add_option("--setParamsByFile", Settings::paramFile,
                    "Parameter file for ad hoc change of the given geometry parameters")
@@ -369,6 +371,7 @@ int Initializer::loadFromXML(const std::string &fileName, bool loadState, const 
     if(model->PrepareToRun()){
         return 1;
     }
+    model->AnalyzeGeom();
 
     // 2. Create simulation dataports
     try {

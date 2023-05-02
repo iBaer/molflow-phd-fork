@@ -163,6 +163,11 @@ int main(int argc, char** argv) {
         return 43;
     }
 
+    if(SettingsIO::analyzeScene) {
+        model->AnalyzeGeom();
+        return 0;
+    }
+
     if(Settings::simDuration == 0 && model->otfParams.desorptionLimit == 0){
         Log::console_error("Neither a time limit nor a desorption limit has been set!\n");
         return 44;
