@@ -365,7 +365,7 @@ double runVectorInterpSearch_indexed(const std::vector<Moment> &intervalMoments,
 avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         for (const auto &particleTrace: Settings::time_points_wbreak) {
-            for (const auto moment: particleTrace) {
+            for (const auto& moment: particleTrace) {
                 int ind = interpolationSearch(moment, intervalMoments, lastIndex);
                 if (ind >= 0) {
                     ++timeBins[ind];
@@ -476,7 +476,7 @@ double runVectorBinarySearch_indexed(const std::vector<Moment> &intervalMoments,
 avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         for (const auto &particleTrace: Settings::time_points_wbreak) {
-            for (const auto moment: particleTrace) {
+            for (const auto& moment: particleTrace) {
                 int ind = LookupMomentIndex(moment, intervalMoments, lastIndex);
                 if (ind >= 0) {
                     ++timeBins[ind];
@@ -509,7 +509,7 @@ double runVectorJumpSearch_indexed(const std::vector<Moment> &intervalMoments,
 avg_time += time.ElapsedMs();
         size_t lastIndex = 0;
         for (const auto &particleTrace: Settings::time_points_wbreak) {
-            for (const auto moment: particleTrace) {
+            for (const auto& moment: particleTrace) {
                 int ind = jumpSearchProg(intervalMoments, moment, intervalMoments.size(), lastIndex);
                 if (ind >= 0) {
                     ++timeBins[ind];
