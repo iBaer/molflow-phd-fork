@@ -435,7 +435,7 @@ namespace flowgpu {
         }
 
         if (n_transparent)
-            Log::console_msg(4, "Model has {} transparent facets.\n");
+            Log::console_msg(4, "Model has {} transparent facets.\n", n_transparent);
         // Textures
         if (!model->textures.empty()) {
             std::cout << "[WARNING] Textures would get added to non-empty vector!" << std::endl;
@@ -941,6 +941,8 @@ namespace flowgpu {
         //edges.clear();
         edges_overlap.clear();
 
+        if(model->triangle_meshes.empty() && model->poly_meshes.empty())
+            exit(444);
         if (NeighborScan::GetAnalysedOverlappingEdges(facet_ptr, simModel.vertices3, edges_overlap)) {
             for (auto &edge: edges_overlap) {
                 auto id1 = edge.facetId1;
@@ -949,7 +951,18 @@ namespace flowgpu {
 
                 if (angle > DegToRad(89.0) && angle < DegToRad(180.0)) { // sharp angle
                     // label corresponding facets
+                    if(!model->triangle_meshes.empty())
                     for (auto &poly: model->triangle_meshes.front()->poly) {
+                        if (poly.parentIndex == id1 || poly.parentIndex == id2) {
+                            poly.facProps.endangered_neighbor = true;
+                            poly.facProps.offset_factor
+                                    = 1.0;//std::max(poly.facProps.offset_factor,(float)(((angle - (DegToRad(89.0))) / (M_PI - DegToRad(89.0))))); // normalize offset to 90 deg radiant value and reverse factor 0->1,1->0
+                            poly.facProps.min_angle = std::min(poly.facProps.min_angle, (float) (RadToDeg(angle)));
+                            poly.facProps.max_angle = std::max(poly.facProps.max_angle, (float) (RadToDeg(angle)));
+                        }
+                    }
+                    if(!model->poly_meshes.empty())
+                    for (auto &poly: model->poly_meshes.front()->poly) {
                         if (poly.parentIndex == id1 || poly.parentIndex == id2) {
                             poly.facProps.endangered_neighbor = true;
                             poly.facProps.offset_factor
@@ -987,6 +1000,8 @@ namespace flowgpu {
 
         Log::console_msg(3, "#ModelReader: Listing endangered neighbors\n");
         int facetIndex = 0;
+
+        if(!model->triangle_meshes.empty())
         for (auto &poly: model->triangle_meshes.front()->poly) {
             if (poly.facProps.endangered_neighbor)
                 Log::console_msg(5, "Facet {} ({}) with offset {} [{} , {}]\n",
@@ -994,6 +1009,15 @@ namespace flowgpu {
                                  poly.facProps.max_angle);
             ++facetIndex;
         }
+
+        if(!model->poly_meshes.empty())
+            for (auto &poly: model->poly_meshes.front()->poly) {
+                if (poly.facProps.endangered_neighbor)
+                    Log::console_msg(5, "Facet {} ({}) with offset {} [{} , {}]\n",
+                                     facetIndex, poly.parentIndex, poly.facProps.offset_factor, poly.facProps.min_angle,
+                                     poly.facProps.max_angle);
+                ++facetIndex;
+            }
 
         for (auto &mesh: model->triangle_meshes) {
             std::cout << "#ModelReader: #Tri " << mesh->poly.size() << std::endl;
@@ -1023,6 +1047,36 @@ namespace flowgpu {
             Log::console_msg(5, "#ModelReader: #SemiTransparentTri {}\n", count_transparent_semi);
             Log::console_msg(5, "#ModelReader: #ProfiledTris {}\n", nbProf);
             Log::console_msg(5, "#ModelReader: #TexturedTris {}\n", nbTex);
+        }
+
+        for (auto &mesh: model->poly_meshes) {
+            std::cout << "#ModelReader: #Poly " << mesh->poly.size() << std::endl;
+            size_t nbProf = 0;
+            size_t nbTex = 0;
+            size_t triCount = 0;
+            size_t count_2sided = 0;
+            size_t count_transparent = 0;
+            size_t count_transparent_semi = 0;
+            size_t count_neigh = 0;
+
+            for (auto &tri: mesh->poly) {
+                if (tri.facProps.endangered_neighbor) ++count_neigh;
+                if (tri.facProps.is2sided) ++count_2sided;
+                if (tri.facProps.opacity == 0.0) ++count_transparent;
+                else if (tri.facProps.opacity > 0.0 && tri.facProps.opacity < 1.0) ++count_transparent_semi;
+                if (tri.profProps.profileType != PROFILE_FLAGS::noProfile)
+                    ++nbProf;
+                if (tri.texProps.textureFlags != TEXTURE_FLAGS::noTexture) {
+                    ++nbTex;
+                    Log::console_msg(5, "#ModelReader: Poly# {} [{}] #TexOffset: {}\n", triCount++, tri.parentIndex,
+                                     tri.texProps.textureOffset);
+                }
+            }
+            Log::console_msg(5, "#ModelReader: #SharpNeighborPoly {}/{}\n", count_neigh, mesh->poly.size());
+            Log::console_msg(5, "#ModelReader: #TransparentPoly {}\n", count_transparent);
+            Log::console_msg(5, "#ModelReader: #SemiTransparentPoly {}\n", count_transparent_semi);
+            Log::console_msg(5, "#ModelReader: #ProfiledPolys {}\n", nbProf);
+            Log::console_msg(5, "#ModelReader: #TexturedPolys {}\n", nbTex);
         }
 
         Log::console_msg(5, "#ModelReader: #TextureCells {}\n", model->textures.size());

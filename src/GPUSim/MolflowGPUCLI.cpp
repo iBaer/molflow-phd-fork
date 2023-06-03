@@ -870,6 +870,8 @@ int main(int argc, char** argv) {
             printer.Print(elapsedTime, globState, true);
     }
 
+    Log::console_msg_master(0,"Leaks: {}\n", globState.globalHits.nbLeakTotal);
+
     if(MFMPI::world_rank == 0){
         if(SettingsIO::outputFacetDetails) {
             FlowIO::Exporter::export_facet_details(&globState, model.get());

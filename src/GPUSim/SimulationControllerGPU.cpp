@@ -648,7 +648,7 @@ double SimulationControllerGPU::GetTransProb() {
     for(unsigned int i = 0; i < globalCounter->facetHitCounters.size(); i++) {
         unsigned int facIndex = i%this->model->nbFacets_total;
         unsigned int facParent = model->poly_meshes[0]->poly[facIndex].parentIndex;
-        if(facParent==polyIndex)
+        if(facParent==i)
             sumAbs += this->globalCounter->facetHitCounters[i].nbAbsEquiv; // let misses count as 0 (-1+1)
     }
 
@@ -798,7 +798,7 @@ void SimulationControllerGPU::IncreaseGlobalCounters(HostData *tempData) {
             // Next check polygon
             for (auto &mesh: model->poly_meshes) {
                 for (auto &facet: mesh->poly) {
-                    if ((facet.texProps.textureFlags)) {
+                    if ((facet.texProps.textureFlags) && (id == facet.parentIndex)) {
                         unsigned int width = model->facetTex[facet.texProps.textureOffset].texWidth;
                         unsigned int height = model->facetTex[facet.texProps.textureOffset].texHeight;
                         for (unsigned int h = 0; h < height; ++h) {
@@ -937,7 +937,7 @@ unsigned long long int SimulationControllerGPU::ConvertSimulationData(GlobalSimu
 
     //facet hit counters + miss
     for (unsigned int facIndex = 0; facIndex < model->nbFacets_total; facIndex++) {
-        unsigned int facParent = model->triangle_meshes[0]->poly[facIndex].parentIndex;
+        unsigned int facParent = !model->triangle_meshes.empty() ? model->triangle_meshes[0]->poly[facIndex].parentIndex : model->poly_meshes[0]->poly[facIndex].parentIndex;
         auto &facetHits = gState.facetStates[facParent].momentResults[0].hits;
         auto &gCounter = globalCounter->facetHitCounters[facIndex];
 
@@ -1060,7 +1060,7 @@ unsigned long long int SimulationControllerGPU::ConvertSimulationData(GlobalSimu
         for (size_t i = 0; i < globalCounter->leakCounter.size(); ++i) {
             if (globalCounter->leakCounter[i] > 0)
                 Log::console_msg_master(3, "{}[{}]  has {} / {} leaks\n",
-                           i, model->triangle_meshes[0]->poly[i].parentIndex, globalCounter->leakCounter[i],
+                           i, !model->triangle_meshes.empty() ? model->triangle_meshes[0]->poly[i].parentIndex : model->poly_meshes[0]->poly[i].parentIndex, globalCounter->leakCounter[i],
                            gState.globalHits.nbLeakTotal);
         }
 #ifdef DEBUGLEAKPOS

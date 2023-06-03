@@ -659,7 +659,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
 
         CUresult cuRes = cuCtxGetCurrent(&state.cudaContext);
         if (cuRes != CUDA_SUCCESS)
-            Log::console_error("Error querying current context: error code {}\n", cuRes);
+            Log::console_error("Error querying current context: error code {}\n", (size_t)cuRes);
 
         OPTIX_CHECK(optixDeviceContextCreate(state.cudaContext, nullptr, &state.context));
         OPTIX_CHECK(optixDeviceContextSetLogCallback
@@ -1013,7 +1013,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
             poly_memory.vertex2x64Buffer[meshID].alloc_and_upload(mesh.vertices2d64);
             poly_memory.indexBuffer[meshID].alloc_and_upload(mesh.indices);
             poly_memory.polyBuffer[meshID].alloc_and_upload(mesh.poly);
-            poly_memory.cdfBuffer[meshID].alloc_and_upload(mesh.cdfs_1);
+            //poly_memory.cdfBuffer[meshID].alloc_and_upload(mesh.cdfs_1);
             poly_memory.facprobBuffer[meshID].alloc_and_upload(mesh.facetProbabilities);
         }
 
