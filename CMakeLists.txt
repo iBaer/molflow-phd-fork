@@ -21,6 +21,8 @@ option(USE_CLANG "build application with clang" OFF) # OFF is the default
 option(USE_PROFILING "disable optimisation for profiling the application" OFF) # OFF is the default
 option(WITH_GPU "activate GPU build" OFF) # OFF is the default
 
+option(USE_CGAL "Use CGAL for triangulation" FALSE)
+
 if(((MSVC AND WIN32) OR (NOT WIN32)) AND WITH_GPU) #one time define for simpler variable
     message("Creating GPU build")
     set(BUILD_GPU ON)

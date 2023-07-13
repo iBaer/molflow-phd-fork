@@ -20,6 +20,18 @@ Full license text: https://www.gnu.org/licenses/old-licenses/gpl-2.0.en.html
 
 #include "Poly2TriConverter.h"
 
+#if defined(USE_CGAL)
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/Triangulation_vertex_base_with_info_2.h>
+#include <CGAL/Delaunay_triangulation_2.h>
+
+typedef CGAL::Exact_predicates_inexact_constructions_kernel K;
+typedef CGAL::Triangulation_vertex_base_with_info_2<unsigned, K> Vb;
+typedef CGAL::Triangulation_data_structure_2<Vb> Tds;
+typedef CGAL::Delaunay_triangulation_2<K, Tds> Delaunay;
+typedef K::Point_2 Point;
+#endif
+
 #define DET22(_11,_12,_21,_22) ( (_11)*(_22) - (_21)*(_12) )
 #define DET33(_11,_12,_13,_21,_22,_23,_31,_32,_33)  \
   ((_11)*( (_22)*(_33) - (_32)*(_23) ) +            \
@@ -174,6 +186,7 @@ int3 GetTriangleFromEar(const std::vector<uint32_t> &ind, const std::vector<floa
     return indices;
 }
 
+#ifndef USE_CGAL
 std::vector<int3> Poly2TriConverter::Triangulate(std::vector<float2> &vertices, std::vector<uint32_t> &indices) {
 
     // Triangulate a facet (rendering purpose)
@@ -202,6 +215,37 @@ std::vector<int3> Poly2TriConverter::Triangulate(std::vector<float2> &vertices, 
 
     return triangles;
 }
+
+#else
+std::vector<int3> Poly2TriConverter::Triangulate(std::vector<float2> &vertices, std::vector<uint32_t> &indices) {
+
+    std::vector<int3> triangles;
+
+    std::vector<std::pair<CGAL::Point_2<K>, unsigned>> indexed_vertices;
+    for (unsigned i = 0; i < vertices.size(); ++i) {
+        indexed_vertices.emplace_back(CGAL::Point_2<K>(vertices[i].x, vertices[i].y), indices[i]);
+    }
+
+
+    // Perform Delaunay triangulation
+    Delaunay triangulation;
+    triangulation.insert(indexed_vertices.begin(), indexed_vertices.end());
+
+    // Convert each face into a triangle and add to output list
+    for (Delaunay::Finite_faces_iterator fit = triangulation.finite_faces_begin(); fit != triangulation.finite_faces_end(); ++fit) {
+        Delaunay::Face_handle face = fit;
+        int3 triangleIndices;
+
+        triangleIndices.x = face->vertex(0)->info();
+        triangleIndices.y = face->vertex(1)->info();
+        triangleIndices.z = face->vertex(2)->info();
+
+        triangles.push_back(triangleIndices);
+    }
+
+    return triangles;
+}
+#endif
 
 // Update facet list of geometry by removing polygon facets and replacing them with triangular facets with the same properties
 int Poly2TriConverter::PolygonsToTriangles(flowgpu::PolygonMesh *polygonMesh, flowgpu::TriangleMesh *triangleMesh) {

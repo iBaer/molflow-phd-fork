@@ -170,6 +170,12 @@ source_group("shader_headers" FILES ${SHADERS_HEADERS})
 #set(SRC_FILES ${geometry_ptx_code} ${SRC_FILES})
 #set(SRC_FILES ${trace_ptx_code} ${SRC_FILES})
 #set(SRC_FILES ${ray_ptx_code} ${SRC_FILES})
+if(USE_CGAL)
+    find_package(CGAL REQUIRED)
+    message("CGAL Dir: ${CGAL_INCLUDE_DIRS}")
+    ADD_DEFINITIONS(-DUSE_CGAL)
+endif()
+
 
 add_library(${PROJECT_NAME} ${SRC_FILES} ${PTX_SOURCES})
 
@@ -216,6 +222,11 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
         cereal
         fmt
         )
+
+if(USE_CGAL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE CGAL::CGAL)
+endif()
+
 
 if(MSVC)
     set(LINK_DIR_1 "${CMAKE_SOURCE_DIR}/lib_external/win/${MY_BUILD_TYPE}")

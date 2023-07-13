@@ -815,7 +815,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
                                             log, &sizeof_log,
                                             &pgRayGen
         ));
-        if (sizeof_log > 1) PRINT(log);
+        //if (sizeof_log > 1) PRINT(log);
 
         programGroups.push_back(pgRayGen);
         state.raygenPG = pgRayGen;
@@ -842,7 +842,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
                                             log, &sizeof_log,
                                             &pgMiss
         ));
-        if (sizeof_log > 1) PRINT(log);
+        //if (sizeof_log >log 1) PRINT(log);
 
         programGroups.push_back(pgMiss);
         state.missPG = pgMiss;
@@ -885,7 +885,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
             std::cerr << ex.what() << std::endl;
             ProcessSleep(10000);
         }
-        if (sizeof_log > 1) PRINT(log);
+        //if (sizeof_log > 1) PRINT(log);
         programGroups.push_back(pgHitgroup[FacetType::FACET_TYPE_SOLID]);
 
 #ifdef WITH_TRANS
@@ -941,7 +941,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
             std::cerr << ex.what() << std::endl;
             ProcessSleep(10000);
         }
-        if (sizeof_log > 1) PRINT(log);
+        //if (sizeof_log > 1) PRINT(log);
         programGroups.push_back(pgExgroup);
         state.exceptionPG = pgExgroup;
     }
@@ -973,7 +973,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
             std::cerr << "[optixPipelineCreate] " << e.what() << std::endl;
             ProcessSleep(1000 * 100);
         }
-        if (sizeof_log > 1) PRINT(log);
+        //if (sizeof_log > 1) PRINT(log);
 
         try {
             OPTIX_CHECK(optixPipelineSetStackSize
@@ -995,7 +995,7 @@ typedef Record<TriangleRayGenData> RaygenRecordTri;
             std::cerr << "[optixPipelineSetStackSize] " << e.what() << std::endl;
             ProcessSleep(1000 * 100);
         }
-        if (sizeof_log > 1) PRINT(log);
+        //if (sizeof_log > 1) PRINT(log);
     }
 
 

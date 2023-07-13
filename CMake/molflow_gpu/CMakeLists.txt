@@ -82,6 +82,11 @@ add_executable(${PROJECT_NAME}
 
         )
 
+if(USE_CGAL)
+    find_package(CGAL REQUIRED)
+    message("Enabling CGAL for various optimized functions.")
+    ADD_DEFINITIONS(-DUSE_CGAL)
+endif()
 target_include_directories(${PROJECT_NAME} PRIVATE
         ${GPU_DIR_1}
         ${CUDA_DIR_1}
@@ -89,19 +94,26 @@ target_include_directories(${PROJECT_NAME} PRIVATE
         ${HEADER_DIR_1}
         ${HEADER_DIR_2}
         ${HEADER_DIR_3}
-        ${HEADER_DIR_4}
         ${HEADER_DIR_5}
         ${HEADER_DIR_6}
         ${HEADER_DIR_7}
         ${HEADER_DIR_8}
+        #${CGAL_INCLUDE_DIRS}
         )
 
+#target_include_directories(${PROJECT_NAME} SYSTEM PRIVATE )
+
 target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_17)
-target_link_libraries(${PROJECT_NAME}
+target_link_libraries(${PROJECT_NAME} PUBLIC
         flowGPU
         shared_simulator
         )
-target_link_libraries(${PROJECT_NAME} pugixml truncatedgaussian)
+target_link_libraries(${PROJECT_NAME} PUBLIC pugixml truncatedgaussian)
+
+
+if(USE_CGAL)
+    target_link_libraries(${PROJECT_NAME} PRIVATE CGAL::CGAL)
+endif()
 
 if(MSVC)
     set(LINK_DIR_2 ../../lib_external/win/${MY_BUILD_TYPE})
