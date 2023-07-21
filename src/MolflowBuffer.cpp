@@ -47,6 +47,7 @@ OntheflySimulationParams::OntheflySimulationParams(){
     benchmarkADS = false;
     raySampling = false;
     calc_convergence = false;
+    run_batch = false;
 }
 
 void FacetHistogramBuffer::Resize(const HistogramParams& params){
