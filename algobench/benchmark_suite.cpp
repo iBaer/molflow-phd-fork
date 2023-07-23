@@ -139,7 +139,7 @@ int main(int argc, char **argv) {
     bool fastEnough = false;
     const size_t nRuns = 5;
     const size_t keepNEntries = 20;
-    const size_t runForTSec = 60;
+    const size_t runForTSec = 15;
 
     std::map<std::string, std::vector<std::pair<int, double>>> perfTimes;
     std::filesystem::create_directory(outPath);
@@ -244,6 +244,9 @@ int main(int argc, char **argv) {
             oldDesNb = globState_old.globalHits.globalHits.nbDesorbed;
             oldHitNb = globState_old.globalHits.globalHits.nbHitEquiv;
         }
+
+        Chronometer build_timer(false);
+        Chronometer simu_timer(false);
         for (auto current_algo: run_algos) {
             std::shared_ptr<MolflowSimulationModel> model = std::make_shared<MolflowSimulationModel>();
 
@@ -276,12 +279,15 @@ int main(int argc, char **argv) {
                 simManager.StopSimulation();
                 oldDesNb = globState.globalHits.globalHits.nbDesorbed;
                 oldHitNb = globState.globalHits.globalHits.nbHitEquiv;
+                build_timer.ReStart();
                 if(benchmark_with_hits)
                     model->BuildAccelStructure(&globState_old, model->wp.accel_type, model->wp.splitMethod, 2, hybrid_weight);
                 else
                     model->BuildAccelStructure(&globState, model->wp.accel_type, model->wp.splitMethod, 2, hybrid_weight);
+                build_timer.Stop();
+                fmt::print("--- BUILD: {} in {}s ---\n", tableDetail.at((BenchAlgo)current_algo), build_timer.Elapsed());
                 simManager.StartSimulation();
-                fmt::print("--- COMMENCE: BENCHMARK {} ---\n", tableDetail.at((BenchAlgo)current_algo));
+                fmt::print("--- BENCH: {} ---\n", tableDetail.at((BenchAlgo)current_algo));
             }
             catch (...){
                 perfTimes[testFile].emplace_back(std::make_pair((int) current_algo, 0.0));
@@ -296,14 +302,13 @@ int main(int argc, char **argv) {
                 ofs.close();
                 continue;
             }
-            Chronometer simTimer(false);
-            simTimer.Start();
+            simu_timer.ReStart();
             double elapsedTime;
 
             bool endCondition = false;
             do {
-                ProcessSleep(1000);
-                elapsedTime = simTimer.Elapsed();
+                ProcessSleep(100);
+                elapsedTime = simu_timer.Elapsed();
                 if (model->otfParams.desorptionLimit != 0)
                     endCondition =
                             globState.globalHits.globalHits.nbDesorbed >= model->otfParams.desorptionLimit;
@@ -312,10 +317,11 @@ int main(int argc, char **argv) {
                     endCondition |= elapsedTime >= static_cast<double>(Settings::simDuration);
                 }
             } while (!endCondition);
-            simTimer.Stop();
+            simu_timer.Stop();
 
             // Stop and copy results
             try {
+                fmt::print("--- DONE: {} in {}s ---\n", tableDetail.at((BenchAlgo)current_algo), simu_timer.Elapsed());
                 simManager.StopSimulation();
                 simManager.KillAllSimUnits();
             }
