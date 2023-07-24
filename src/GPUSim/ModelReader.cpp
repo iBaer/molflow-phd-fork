@@ -660,9 +660,6 @@ namespace flowgpu {
                                 triMesh->texCoords.emplace_back(
                                         make_float2(static_cast<float>(u), static_cast<float>(v)));
                             }
-
-                            //TODO: Check if legit
-                            break;
                         }
 
                         triInd++;
