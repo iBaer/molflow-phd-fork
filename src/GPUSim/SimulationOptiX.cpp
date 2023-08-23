@@ -1314,8 +1314,10 @@ try{
                 state.launchParamsBuffer.sizeInBytes,
                 &state.sbt,
                 /*! dimensions of the launch: */
+                settings->kernelDimensions[0],
+                settings->kernelDimensions[1],/*
                 state.launchParams.simConstants.size.x,
-                state.launchParams.simConstants.size.y,
+                state.launchParams.simConstants.size.y,*/
                 1
         ));
 

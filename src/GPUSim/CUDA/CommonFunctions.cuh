@@ -165,9 +165,9 @@ static __forceinline__ __device__ float3 offset_to_center(const float3 p, unsign
     float offset_loc = optixLaunchParams.simConstants.offset_center_magnitude * poly.facProps.offset_factor;
 
     //offset_loc = (0.9 * length(c-p) < offset_valc) ? 0.9 * length(c-p) : offset_valc;
-    /*printf("Offset check: %lf (%lf) - %lf\n", offset_loc, poly.facProps.offset_factor, length(c-p));
-    printf("Offset point: dir(%lf , %lf , %lf) - c(%lf , %lf , %lf) - p(%lf , %lf , %lf)\n", dir_i.z, dir_i.y, dir_i.z, c.z, c.y, c.z, p.x, p.y, p.z);
-*/
+    //printf("Offset check: %lf (%lf) - %lf\n", offset_loc, poly.facProps.offset_factor, length(c-p));
+    //printf("Offset point: dir(%lf , %lf , %lf) - c(%lf , %lf , %lf) - p(%lf , %lf , %lf)\n", dir_i.z, dir_i.y, dir_i.z, c.z, c.y, c.z, p.x, p.y, p.z);
+
     int3 of_i(make_int3(
             int_scale() * dir_i.x * offset_loc,
             int_scale() * dir_i.y * offset_loc,
@@ -193,9 +193,9 @@ static __forceinline__ __device__ float3 offset_to_center(const float3 p, unsign
            normpoint.x, normpoint.y, normpoint.z,
            p_i.x, p_i.y, p_i.z);*/
 
-    return float3(make_float3(p.x+1.0f* offset_loc*float_scale()*dir_i.x,
+    /*return float3(make_float3(p.x+1.0f* offset_loc*float_scale()*dir_i.x,
                               p.y+1.0f* offset_loc*float_scale()*dir_i.y,
-                              p.z+1.0f* offset_loc*float_scale()*dir_i.z));
+                              p.z+1.0f* offset_loc*float_scale()*dir_i.z));*/
     //return p;
     return float3(make_float3(
             fabsf(p.x) < origin() ? p.x+offset_loc*float_scale()*dir_i.x : p_i.x,
@@ -203,6 +203,232 @@ static __forceinline__ __device__ float3 offset_to_center(const float3 p, unsign
             fabsf(p.z) < origin() ? p.z+offset_loc*float_scale()*dir_i.z : p_i.z));
 
     return float3(make_float3(p.x+float_scale()*c.x, p.y+float_scale()*c.y, p.z+float_scale()*c.z));
+}
+
+
+/*
+static __forceinline__ __device__ float3 offset_to_center_bary(const float2 bary, const float3 vertA, const float3 vertB,const float3 vertC, const float3 p, unsigned int prim_idx, const flowgpu::Polygon& poly){
+
+    // get triangle center
+    //float3 center;
+    const flowgpu::TriangleMeshSBTData &sbtData = *(const flowgpu::TriangleMeshSBTData*)optixGetSbtDataPointer();
+
+    const float3 &c = poly.center;
+    const float one_third = 1.0f/3.0f;
+    float u = bary.x;
+    float v = bary.y;
+    float w = 1.0f - bary.x - bary.y;
+    float wu = u * vertA.x + v * vertB.x + w * vertC.x;
+    float wv = u * vertA.y + v * vertB.y + w * vertC.y;
+    float ww = u * vertA.z + v * vertB.z + w * vertC.z;
+
+
+    */
+/*DEBUG_PRINT("NEW OFFSET[%d -> %d -> %d] "
+                "(%12.10f , %12.10f , %12.10f) \n",
+                idx0, idx1, idx2, Aa.x, Aa.y, Aa.z);*//*
+
+
+    //int3 of_i(make_int3(int_scale() * c.x, int_scale() * c.y, int_scale() * c.z));
+    //const int3 of_i = make_float3(float_scale()*c.x, float_scale()*c.y, float_scale()*c.z);
+
+
+    //float offset_loc = offset_valc * poly.facProps.offset_factor;
+    float offset_loc = optixLaunchParams.simConstants.offset_center_magnitude * poly.facProps.offset_factor;
+
+
+    // First attempt : linear to centre 0.3, 0.3, 0.3
+    bool diffu = false;
+    bool diffv = false;
+    bool diffw = false;
+    float diff = 0.0f;
+
+
+    float3 dir_i = normalize(make_float3(one_third) - make_float3(u,v,w));
+    float3 factor = (make_float3(0.0) - make_float3(u,v,w));
+    factor.x = abs(factor.x);
+    factor.y = abs(factor.y);
+    factor.z = abs(factor.z);
+
+    const float n = 1000.0f;
+    float ex = expf( -n* factor.x);
+    float ey = expf( -n * factor.y);
+    float ez = expf( -n * factor.z);
+    //offset_loc = (0.9 * length(c-p) < offset_valc) ? 0.9 * length(c-p) : offset_valc;
+    //printf("Offset check: %lf (%lf) - %lf\n", offset_loc, poly.facProps.offset_factor, length(c-p));
+
+    // Find the smallest component in the original barycentric coordinate
+    float min_component = fminf(u, fminf(v, w));
+
+    // Calculate the scaling factor based on the minimum value
+    //float n = 10.0f; // Adjust this value to control the rate of scaling
+    float scaling_factor = expf(-n * min_component);
+    // TODO: should be per component, in case its applied on multiple
+
+    // Cap the strongest scaling to 1 for very small values (1e-7)
+    scaling_factor = clamp(scaling_factor, 0.0f, 1.0f);
+    offset_loc *= */
+/*optixLaunchParams.simConstants.offset_center_magnitude * poly.facProps.offset_factor * *//*
+scaling_factor;
+
+    // Transpose the axis with the smallest component towards the center
+    float3 transposed_bary = make_float3(u, v, w);
+    if (min_component < 5e-4) {
+        if (5e-4>  u) {
+            transposed_bary.x = int_as_float(float_as_int(max(u, 1.0e-6f)) + int(int_scale() * offset_loc * (one_third - u)));
+        } if (5e-4> v) {
+            transposed_bary.y = int_as_float(float_as_int(max(v, 1.0e-6f)) +  int(int_scale() *offset_loc * (one_third - v)));
+        } if(5e-4>w) {
+            transposed_bary.z = int_as_float(float_as_int(max(w, 1.0e-6f)) +  int(int_scale() * offset_loc * (one_third - w)));
+        }
+    }
+
+    // Normalize the transposed barycentric coordinate
+    float sum = transposed_bary.x + transposed_bary.y + transposed_bary.z;
+    transposed_bary /= sum;
+
+
+    */
+/*int3 of_i(make_int3(
+            int_scale() * ex * offset_loc,
+            int_scale() * ey * offset_loc,
+            int_scale() * ez * offset_loc));
+    float3 p_i(make_float3(
+            int_as_float(float_as_int(u)+(of_i.x)),
+            int_as_float(float_as_int(v)+(of_i.y)),
+            int_as_float(float_as_int(w)+(of_i.z))));
+
+    if(u < 1e-5) {
+        float delta = p_i.x - u;
+        p_i.y = v + ((v < one_third) ? (0.5f * delta) : -(0.5f * delta));
+        p_i.z = 1.0f - p_i.x - p_i.y;
+        if(abs(1.0f - p_i.x - p_i.y)  < p_i.x )
+            printf("uDiff marker\n");
+    }
+    else if(v < 1e-5) {
+        float delta = p_i.y - v;
+        p_i.z = w + ((w < one_third) ? (0.5f * delta) : -(0.5f * delta));
+        p_i.x = 1.0f - p_i.y - p_i.z;
+        if(abs(1.0f - p_i.x - p_i.y)  < p_i.y )
+            printf("vDiff marker\n");
+    }
+    else if(w < 1e-5) {
+        float delta = p_i.z - w;
+        p_i.x = u + ((u < one_third) ? (0.5f * delta) : -(0.5f * delta));
+        p_i.y = 1.0f - p_i.z - p_i.x;
+        if(abs(1.0f - p_i.x - p_i.y) < p_i.z)
+            printf("wDiff marker\n");
+    }*//*
+
+
+    */
+/*printf("Offset point: dir(%lf , %lf , %lf) - b(%e , %e , %e) - pi(%e , %e , %e) [%e , %e , %e --> %e , %e , %e]\n",
+           dir_i.x, dir_i.y, dir_i.z, u,v,w, p_i.x, p_i.y, p_i.z, factor.x, factor.y, factor.z, ex, ey, ez);
+    return float3(make_float3(p_i.x, p_i.y, p_i.z));*//*
+
+    return transposed_bary;
+
+    //return float3(make_float3(p.x+float_scale()*c.x, p.y+float_scale()*c.y, p.z+float_scale()*c.z));
+}
+*/
+
+
+static __forceinline__ __device__ float3 offset_to_center_bary(const float2 bary, const float3 vertA, const float3 vertB,const float3 vertC, const float3 p, unsigned int prim_idx, const flowgpu::Polygon& poly){
+
+    // get triangle center
+    //float3 center;
+    //const flowgpu::TriangleMeshSBTData &sbtData = *(const flowgpu::TriangleMeshSBTData*)optixGetSbtDataPointer();
+
+    //const float3 &c = poly.center;
+    const float one_third = 1.0f/3.0f;
+    float u = bary.x;
+    float v = bary.y;
+    float w = 1.0f - bary.x - bary.y;
+    /*float wu = u * vertA.x + v * vertB.x + w * vertC.x;
+    float wv = u * vertA.y + v * vertB.y + w * vertC.y;
+    float ww = u * vertA.z + v * vertB.z + w * vertC.z;*/
+
+    //float offset_loc = offset_valc * poly.facProps.offset_factor;
+    float offset_loc = optixLaunchParams.simConstants.offset_center_magnitude * poly.facProps.offset_factor;
+
+    float3 factor = (make_float3(0.0) - make_float3(u,v,w));
+    factor.x = abs(factor.x);
+    factor.y = abs(factor.y);
+    factor.z = abs(factor.z);
+
+    const float n = 1000.0f;
+    float ex = expf( -n* factor.x);
+    float ey = expf( -n * factor.y);
+    float ez = expf( -n * factor.z);
+
+    // Find the smallest component in the original barycentric coordinate
+    //float min_component = fminf(u, fminf(v, w));
+
+    // Calculate the scaling factor based on the minimum value
+    //float n = 10.0f; // Adjust this value to control the rate of scaling
+    //float scaling_factor = expf(-n * min_component);
+    // TODO: should be per component, in case its applied on multiple
+
+    // Cap the strongest scaling to 1 for very small values (1e-7)
+    // TODO 1 scaling_factor = clamp(scaling_factor, 0.0f, 1.0f);
+    //offset_loc *= /*optixLaunchParams.simConstants.offset_center_magnitude * poly.facProps.offset_factor * */scaling_factor;
+
+    // Transpose the axis with the smallest component towards the center
+    float3 transposed_bary = make_float3(u, v, w);
+    //if (min_component < 5e-4) {
+        if (5e-4>  u) {
+            transposed_bary.x = int_as_float(float_as_int(max(u, 1.0e-6f)) + int(int_scale() * offset_loc * ex * (one_third - u)));
+        }
+        if (5e-4> v) {
+            transposed_bary.y = int_as_float(float_as_int(max(v, 1.0e-6f)) +  int(int_scale() *offset_loc * ey * (one_third - v)));
+        }
+        if(5e-4>w) {
+            transposed_bary.z = int_as_float(float_as_int(max(w, 1.0e-6f)) +  int(int_scale() * offset_loc * ez * (one_third - w)));
+        }
+    //}
+
+    // Normalize the transposed barycentric coordinate
+    float sum = transposed_bary.x + transposed_bary.y + transposed_bary.z;
+    transposed_bary /= sum;
+
+
+    /*int3 of_i(make_int3(
+            int_scale() * ex * offset_loc,
+            int_scale() * ey * offset_loc,
+            int_scale() * ez * offset_loc));
+    float3 p_i(make_float3(
+            int_as_float(float_as_int(u)+(of_i.x)),
+            int_as_float(float_as_int(v)+(of_i.y)),
+            int_as_float(float_as_int(w)+(of_i.z))));
+
+    if(u < 1e-5) {
+        float delta = p_i.x - u;
+        p_i.y = v + ((v < one_third) ? (0.5f * delta) : -(0.5f * delta));
+        p_i.z = 1.0f - p_i.x - p_i.y;
+        if(abs(1.0f - p_i.x - p_i.y)  < p_i.x )
+            printf("uDiff marker\n");
+    }
+    else if(v < 1e-5) {
+        float delta = p_i.y - v;
+        p_i.z = w + ((w < one_third) ? (0.5f * delta) : -(0.5f * delta));
+        p_i.x = 1.0f - p_i.y - p_i.z;
+        if(abs(1.0f - p_i.x - p_i.y)  < p_i.y )
+            printf("vDiff marker\n");
+    }
+    else if(w < 1e-5) {
+        float delta = p_i.z - w;
+        p_i.x = u + ((u < one_third) ? (0.5f * delta) : -(0.5f * delta));
+        p_i.y = 1.0f - p_i.z - p_i.x;
+        if(abs(1.0f - p_i.x - p_i.y) < p_i.z)
+            printf("wDiff marker\n");
+    }*/
+
+    /*printf("Offset point: dir(%lf , %lf , %lf) - b(%e , %e , %e) - pi(%e , %e , %e) [%e , %e , %e --> %e , %e , %e]\n",
+           dir_i.x, dir_i.y, dir_i.z, u,v,w, p_i.x, p_i.y, p_i.z, factor.x, factor.y, factor.z, ex, ey, ez);
+    return float3(make_float3(p_i.x, p_i.y, p_i.z));*/
+    return transposed_bary;
+
+    //return float3(make_float3(p.x+float_scale()*c.x, p.y+float_scale()*c.y, p.z+float_scale()*c.z));
 }
 
 // Normal points outward for rays exiting the surface, else is flipped.
@@ -229,8 +455,8 @@ static __forceinline__ __device__ void apply_offset(const flowgpu::Polygon& poly
     const uint32_t facIndex = hitData.hitFacetId;
 #ifdef BOUND_CHECK
     if(facIndex >= optixLaunchParams.simConstants.nbFacets){
-                printf("[RayOffset] facIndex %u >= %u is out of bounds (%u)\n", facIndex, optixLaunchParams.simConstants.nbFacets, hitData.inSystem);
-            }
+        printf("[RayOffset] facIndex %u >= %u is out of bounds (%u)\n", facIndex, optixLaunchParams.simConstants.nbFacets, hitData.inSystem);
+    }
 #endif
     //do not offset a transparent hit
     //if(optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].inSystem != TRANSPARENT_HIT){

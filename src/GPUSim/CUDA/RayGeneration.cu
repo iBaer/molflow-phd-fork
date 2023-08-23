@@ -267,7 +267,62 @@ namespace flowgpu {
         const PolygonRayGenData *rayGenData = (PolygonRayGenData *) optixGetSbtDataPointer();
 #endif
         if(rayGenData->poly[hitData.hitFacetId].facProps.endangered_neighbor) { // with offset to center
-            rayOrigin = offset_to_center(hitData.hitPos, hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId]);
+            //rayOrigin = offset_to_center(hitData.hitPos, hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId]);
+            if(hitData.barycentrics.x < 1e-4 || hitData.barycentrics.y < 1e-4 || 1.0 - hitData.barycentrics.x - hitData.barycentrics.y < 1e-4) {
+                    //float3 offsetted = offset_to_center(hitData.hitPos, hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId]);
+               if(1){ //if(rayGenData->poly[hitData.hitFacetId].parentIndex == 4 || rayGenData->poly[hitData.hitFacetId].parentIndex == 9) {
+                    /*printf("Offset diff : %e , %e , %e x %e , %e , %e = D( %e , %e , %e ) \n",
+                           hitData.hitPos.x, hitData.hitPos.y, hitData.hitPos.z, offsetted.x , offsetted.y , offsetted.z,
+                           hitData.hitPos.x - offsetted.x, hitData.hitPos.y - offsetted.y, hitData.hitPos.z - offsetted.z);*/
+                    float u = hitData.barycentrics.x;
+                    float v = hitData.barycentrics.y;
+                    float w = 1.0f - hitData.barycentrics.x - hitData.barycentrics.y;
+                    float3 vertA = rayGenData->vertex[rayGenData->index[hitData.hitFacetId].x];
+                    float3 vertB = rayGenData->vertex[rayGenData->index[hitData.hitFacetId].y];
+                    float3 vertC = rayGenData->vertex[rayGenData->index[hitData.hitFacetId].z];
+                    /*float wu = u * vertA.x + v * vertB.x + w * vertC.x;
+                    float wv = u * vertA.y + v * vertB.y + w * vertC.y;
+                    float ww = u * vertA.z + v * vertB.z + w * vertC.z;*/
+
+                   hitData.barycentrics_old = hitData.barycentrics;
+                   float3 bary_off = offset_to_center_bary(hitData.barycentrics, vertA, vertB, vertC, hitData.hitPos, hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId]);
+                    float wu = hitData.barycentrics.x * vertA.x + hitData.barycentrics.y * vertB.x + (1.0f-hitData.barycentrics.x-hitData.barycentrics.y) * vertC.x;
+                    float wv = hitData.barycentrics.x * vertA.y + hitData.barycentrics.y * vertB.y + (1.0f-hitData.barycentrics.x-hitData.barycentrics.y) * vertC.y;
+                    float ww = hitData.barycentrics.x * vertA.z + hitData.barycentrics.y * vertB.z + (1.0f-hitData.barycentrics.x-hitData.barycentrics.y) * vertC.z;
+                    float wu_off = bary_off.x * vertA.x + bary_off.y * vertB.x + bary_off.z * vertC.x;
+                    float wv_off = bary_off.x * vertA.y + bary_off.y * vertB.y + bary_off.z * vertC.y;
+                    float ww_off = bary_off.x * vertA.z + bary_off.y * vertB.z + bary_off.z * vertC.z;
+                    //printf("[%d (%d)] Offset diff : %e , %e , %e : ( %e , %e , %e ) -> ( %e , %e , %e ) --- [D( %e , %e , %e )]\n",
+
+
+                    optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].hitPos = make_float3(wu_off, wv_off, ww_off);
+                    hitData.hitPos = make_float3(wu_off, wv_off, ww_off);
+                    hitData.barycentrics = make_float2(bary_off.x, bary_off.y);
+                   optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].barycentrics = hitData.barycentrics;
+                   optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].barycentrics_old = hitData.barycentrics_old;
+
+                   rayOrigin = hitData.hitPos;
+                   optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].hitPos = hitData.hitPos;
+                   /*if(hitData.barycentrics.x < 1e-5 || hitData.barycentrics.y < 1e-5 || 1.0 - hitData.barycentrics.x - hitData.barycentrics.y < 1e-5) {
+                       printf("[%d (%d)] Offset diff : %e , %e , %e --- %e , %e , %e [D( %e , %e , %e )]\n",
+                              hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId].parentIndex,
+                              hitData.barycentrics.x, hitData.barycentrics.y,
+                              1.0f - hitData.barycentrics.x - hitData.barycentrics.y,
+                              bary_off.x, bary_off.y, bary_off.z,
+                               *//*wu, wv, ww,
+                                wu_off, wv_off, ww_off,*//*
+                              hitData.barycentrics.x - bary_off.x, hitData.barycentrics.y - bary_off.y,
+                              (1.0f - hitData.barycentrics.x - hitData.barycentrics.y) - bary_off.z
+                       );
+                       printf("[%d (%d)] Offset real : %e , %e , %e \n",
+                              hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId].parentIndex, hitData.hitPos.x, hitData.hitPos.y, hitData.hitPos.z
+                       );
+                   }*/
+
+               }
+                /*optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex].hitPos = offset_to_center(
+                        hitData.hitPos, hitData.hitFacetId, rayGenData->poly[hitData.hitFacetId]);*/
+            }
         }
 #ifdef DEBUG
         //printf("--- in[%d] %4.2f , %4.2f , %4.2f - %4.2f , %4.2f , %4.2f ---\n", blockDim.x * blockIdx.x + threadIdx.x,optixLaunchParams.perThreadData.currentMoleculeData[fbIndex].hitPos.x, optixLaunchParams.perThreadData.currentMoleculeData[fbIndex].hitPos.y, optixLaunchParams.perThreadData.currentMoleculeData[fbIndex].hitPos.z,optixLaunchParams.perThreadData.currentMoleculeData[fbIndex].postHitDir.x, optixLaunchParams.perThreadData.currentMoleculeData[fbIndex].postHitDir.y, optixLaunchParams.perThreadData.currentMoleculeData[fbIndex].postHitDir.z);
@@ -503,6 +558,10 @@ void recordDesorption(const unsigned int& counterIdx, const flowgpu::Polygon& po
         hitData.rndDirection[0] = -999999.9;
         hitData.rndDirection[1] = -999999.9;
 
+#ifdef DEBUG_BARY
+        hitData.barycentrics = {-999999.9, -999999.9};
+        hitData.barycentrics_old = {-999999.9, -999999.9};
+#endif
 #ifdef WITHTRIANGLES
         const TriangleRayGenData* rayGenData = (TriangleRayGenData*) optixGetSbtDataPointer();
 #else
@@ -575,6 +634,7 @@ void recordDesorption(const unsigned int& counterIdx, const flowgpu::Polygon& po
 
         MolPRD& hitData = optixLaunchParams.perThreadData.currentMoleculeData[bufferIndex];
 
+        //printf("[%d] Particle status: %d v %d\n", bufferIndex, hitData.hasToTerminate, hitData.inSystem);
 #ifdef WITHDESORPEXIT
         if(hitData.hasToTerminate==2){
             return;

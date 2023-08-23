@@ -219,10 +219,10 @@ namespace flowgpu {
             facet.center = (a + b + c) / 3.0;
             //facet.center += facet.N * 1e-2f;
 
-            Log::console_msg(5, "Facet {}({}) with center {} , {} , {} and N = {} , {} , {}\n",
+            Log::console_msg(8, "Facet {}({}) with center {} , {} , {} and N = {} , {} , {}\n",
                              facetIndex, facet.parentIndex, facet.center.x, facet.center.y, facet.center.z,
                              facet.N.x, facet.N.y, facet.N.z);
-            Log::console_msg(5, "     {} , {} , {} -- {} , {} , {} -- {} , {} , {}\n",
+            Log::console_msg(9, "     {} , {} , {} -- {} , {} , {} -- {} , {} , {}\n",
                              a.x, a.y, a.z,
                              b.x, b.y, b.z,
                              c.x, c.y, c.z
@@ -956,6 +956,12 @@ namespace flowgpu {
                                     = 1.0;//std::max(poly.facProps.offset_factor,(float)(((angle - (DegToRad(89.0))) / (M_PI - DegToRad(89.0))))); // normalize offset to 90 deg radiant value and reverse factor 0->1,1->0
                             poly.facProps.min_angle = std::min(poly.facProps.min_angle, (float) (RadToDeg(angle)));
                             poly.facProps.max_angle = std::max(poly.facProps.max_angle, (float) (RadToDeg(angle)));
+                            float a               = 40473;
+                            float b               = 20198.9;
+                            float c               = -381.51;
+                            float d               = 2.29206;
+                            double x = poly.facProps.max_angle;
+                            poly.facProps.offset_factor = a + b*x + c*std::pow(x,2) + d*std::pow(x,3);
                         }
                     }
                     if(!model->poly_meshes.empty())
@@ -969,7 +975,7 @@ namespace flowgpu {
                         }
                     }
                 }
-                Log::console_msg(5, " Poly #{} -- #{} with angle {}\n", id1, id2, (float) (RadToDeg(angle)));
+                Log::console_msg(6, " Poly #{} -- #{} with angle {}\n", id1, id2, (float) (RadToDeg(angle)));
             }
         }
 
@@ -1001,7 +1007,7 @@ namespace flowgpu {
         if(!model->triangle_meshes.empty())
         for (auto &poly: model->triangle_meshes.front()->poly) {
             if (poly.facProps.endangered_neighbor)
-                Log::console_msg(5, "Facet {} ({}) with offset {} [{} , {}]\n",
+                Log::console_msg(7, "Facet {} ({}) with offset {} [{} , {}]\n",
                                  facetIndex, poly.parentIndex, poly.facProps.offset_factor, poly.facProps.min_angle,
                                  poly.facProps.max_angle);
             ++facetIndex;
@@ -1010,7 +1016,7 @@ namespace flowgpu {
         if(!model->poly_meshes.empty())
             for (auto &poly: model->poly_meshes.front()->poly) {
                 if (poly.facProps.endangered_neighbor)
-                    Log::console_msg(5, "Facet {} ({}) with offset {} [{} , {}]\n",
+                    Log::console_msg(7, "Facet {} ({}) with offset {} [{} , {}]\n",
                                      facetIndex, poly.parentIndex, poly.facProps.offset_factor, poly.facProps.min_angle,
                                      poly.facProps.max_angle);
                 ++facetIndex;

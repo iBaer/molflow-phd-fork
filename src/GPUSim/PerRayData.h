@@ -5,6 +5,8 @@
 #ifndef MOLFLOW_PROJ_PERRAYDATA_H
 #define MOLFLOW_PROJ_PERRAYDATA_H
 
+#define DEBUG_BARY 1
+
 #include <optix.h>
 
 namespace flowgpu {
@@ -32,6 +34,10 @@ namespace flowgpu {
         // flags - post launch processing TODO: convert all into one uint32_t ?
 #ifdef WITHDESORPEXIT
         unsigned int hasToTerminate;
+#endif
+#ifdef DEBUG_BARY
+        float2 barycentrics;
+        float2 barycentrics_old;
 #endif
     };
 

@@ -162,7 +162,7 @@ bool SimulationControllerGPU::runLoop() {
                               timeEnd - timeStart >= this->model->ontheflyParams.timeLimit * 1000;
         const bool eos_comm = (procInfo->masterCmd != COMMAND_START);
         const bool eos_des = this->model->ontheflyParams.desorptionLimit != 0 &&
-                this->simulation->globState->globalHits.globalHits.nbDesorbed >= this->model->ontheflyParams.desorptionLimit * 1000;
+                this->simulation->globState->globalHits.globalHits.nbDesorbed >= this->model->ontheflyParams.desorptionLimit * 1;
         eos = simEos || eos_time || eos_comm || eos_des;
     } while (!eos);
 
@@ -177,7 +177,7 @@ bool SimulationControllerGPU::runLoop() {
     }*/
 
     Log::console_msg_master(3, " EOS at {} / {} with {} x {} x {} des\n",
-                            globFigures.runCount, refreshForStop, globFigures.total_des, figures.total_des, simulation->globState->globalHits.globalHits.nbDesorbed);
+                            globFigures.runCount, model->ontheflyParams.desorptionLimit != 0 ? refreshForStop : -1, globFigures.total_des, figures.total_des, simulation->globState->globalHits.globalHits.nbDesorbed);
 
     return simEos;
 }
@@ -340,7 +340,12 @@ bool SimulationControllerGPU::Load() {
         else {
             loadOk = !LoadSimulation(model, settings->kernelDimensions[0] * settings->kernelDimensions[1]);
         }
-        Reset();
+        //Reset();
+        SetState(PROCESS_STARTING, "Resetting local cache...", false, true);
+        resetControls();
+        ResetSimulation(true);
+        SetReady(loadOk);
+
         SetRuntimeInfo();
     }
     SetReady(loadOk);
@@ -358,7 +363,7 @@ int SimulationControllerGPU::Reset() {
     DEBUG_PRINT("[%d] COMMAND: RESET (%zd,%zu)\n", prIdx, procInfo->cmdParam, procInfo->cmdParam2);
     SetState(PROCESS_STARTING, "Resetting local cache...", false, true);
     resetControls();
-    ResetSimulation(true);
+    ResetSimulation(false);
     SetReady(loadOk);
     return 0;
 }
@@ -463,8 +468,8 @@ int SimulationControllerGPU::RemainingStepsUntilStop() {
  */
 void SimulationControllerGPU::AllowNewParticles() {
 #ifdef WITHDESORPEXIT
-    if (this->model->ontheflyParams.desorptionLimit > 0 &&
-        figures.total_des >= this->model->ontheflyParams.desorptionLimit)
+    if (!this->optixHandle || (this->model && this->model->ontheflyParams.desorptionLimit > 0 &&
+        figures.total_des >= this->model->ontheflyParams.desorptionLimit))
         return;
     optixHandle->downloadDataFromDevice(data.get()); //download tmp counters
     for (auto &particle: data->hitData) {
@@ -483,8 +488,8 @@ void SimulationControllerGPU::AllowNewParticles() {
  */
 void SimulationControllerGPU::StopNewParticles() {
 #ifdef WITHDESORPEXIT
-    if (this->model->ontheflyParams.desorptionLimit > 0 &&
-        figures.total_des >= this->model->ontheflyParams.desorptionLimit)
+    if (!this->optixHandle || (this->model->ontheflyParams.desorptionLimit > 0 &&
+        figures.total_des >= this->model->ontheflyParams.desorptionLimit))
         return;
     optixHandle->downloadDataFromDevice(data.get()); //download tmp counters
     for (auto &particle: data->hitData) {
@@ -501,7 +506,7 @@ void SimulationControllerGPU::StopNewParticles() {
 //! Check for desorption limit and block desorption of new particles
 void SimulationControllerGPU::CheckAndBlockDesorption() {
 #ifdef WITHDESORPEXIT
-    if (this->model->ontheflyParams.desorptionLimit > 0) {
+    if (this->optixHandle && this->model && this->model->ontheflyParams.desorptionLimit > 0) {
         if (figures.total_des >= this->model->ontheflyParams.desorptionLimit) {
             endCalled = false;
             size_t nbExit = 0;
@@ -593,6 +598,63 @@ void SimulationControllerGPU::CheckAndBlockDesorption_exact(double threshold) {
             }
             //printf("Block: %llu [%zu / %zu / %zu / %zu / %zu]\n", desToStop, nbTerm, nbExit, nThreads, data->hitData.size(), data->hitData.size() - desToStop);
 
+        }
+    }
+    else if (!settings->allowNewParticles){
+
+        size_t desToStop = 0;
+        //endCalled = false;
+        size_t nbExit = 0;
+        size_t nbTerm = 0;
+
+        // 1. Set already terminated particles back to active
+        // 2. set remaining active particles to terminate
+        // that way there will never be inactive particles reaching full desorption limit
+        int pInd = 0;
+        auto desLim = desToStop;
+        if (endCalled) {
+            while (desLim > 0 && pInd < data->hitData.size()) {
+                auto &particle = data->hitData[pInd];
+                if (particle.hasToTerminate == 2) {
+                    particle.hasToTerminate = 1;
+                    --desLim;
+                } else if (particle.hasToTerminate == 1) {
+                    ++nbTerm;
+                } else if (particle.hasToTerminate == 0) {
+                    particle.hasToTerminate = 1;
+                }
+                ++pInd;
+            }
+        } else {
+            for (auto &particle: data->hitData) {
+                particle.hasToTerminate = 1;
+            }
+            pInd = desToStop;
+            endCalled = true;
+        }
+
+        // set remainders
+        for (int p = pInd; p < data->hitData.size(); ++p) {
+            auto &particle = data->hitData[p];
+            if (particle.hasToTerminate == 0) {
+                particle.hasToTerminate = 1;
+                ++nbTerm;
+            } else if (particle.hasToTerminate == 2) {
+                nbExit++;
+            } else {
+                endCalled = true;
+            }
+        }
+
+        if (nbExit) {
+            globFigures.exitCount += nbExit - prevExitCount;
+            prevExitCount = nbExit;
+        }
+        if (endCalled) optixHandle->updateHostData(data.get());
+        if (nbExit >= nThreads * threshold) {
+            prevExitCount = 0;
+            std::cout << " READY TO EXIT! " << std::endl;
+            hasEnded = true;
         }
     }
 #endif
@@ -1052,16 +1114,43 @@ unsigned long long int SimulationControllerGPU::ConvertSimulationData(GlobalSimu
         }
     }
 
+#ifdef DEBUGPOS
+    // HHit (Only prIdx 0)
+    for (size_t hitIndex = 0; hitIndex < globalCounter->positions.size(); hitIndex++) {
+        gState.globalHits.hitCache[(hitIndex + gState.globalHits.lastHitIndex) % HITCACHESIZE].pos.x = globalCounter->positions[hitIndex].x;
+        gState.globalHits.hitCache[(hitIndex + gState.globalHits.lastHitIndex) % HITCACHESIZE].pos.y = globalCounter->positions[hitIndex].y;
+        gState.globalHits.hitCache[(hitIndex + gState.globalHits.lastHitIndex) % HITCACHESIZE].pos.z = globalCounter->positions[hitIndex].z;
+        gState.globalHits.hitCache[(hitIndex + gState.globalHits.lastHitIndex) % HITCACHESIZE].type = HIT_REF;
+    }
+    gState.globalHits.hitCache[gState.globalHits.lastHitIndex].type = HIT_REF; //Penup (border between blocks of consecutive hits in the hit cache)
+    gState.globalHits.lastHitIndex = (gState.globalHits.lastHitIndex + globalCounter->positions.size()) % HITCACHESIZE;
+    gState.globalHits.hitCache[gState.globalHits.lastHitIndex].type = HIT_LAST; //Penup (border between blocks of consecutive hits in the hit cache)
+    gState.globalHits.hitCacheSize = std::min(HITCACHESIZE, gState.globalHits.hitCacheSize + globalCounter->positions.size());
+#endif // DEBUGPOS
+    
+    
     // Leak
     if (!globalCounter->leakCounter.empty()) {
         for (unsigned long leakCounter : globalCounter->leakCounter) {
             gState.globalHits.nbLeakTotal += leakCounter;
         }
         for (size_t i = 0; i < globalCounter->leakCounter.size(); ++i) {
-            if (globalCounter->leakCounter[i] > 0)
+            if (globalCounter->leakCounter[i] > 0) {
                 Log::console_msg_master(3, "{}[{}]  has {} / {} leaks\n",
-                           i, !model->triangle_meshes.empty() ? model->triangle_meshes[0]->poly[i].parentIndex : model->poly_meshes[0]->poly[i].parentIndex, globalCounter->leakCounter[i],
-                           gState.globalHits.nbLeakTotal);
+                                        i,
+                                        !model->triangle_meshes.empty() ? model->triangle_meshes[0]->poly[i].parentIndex
+                                                                        : model->poly_meshes[0]->poly[i].parentIndex,
+                                        globalCounter->leakCounter[i],
+                                        gState.globalHits.nbLeakTotal);
+                /*if(model->triangle_meshes[0]->poly[i].parentIndex == 0
+                || model->triangle_meshes[0]->poly[i].parentIndex == 1
+                || model->triangle_meshes[0]->poly[i].parentIndex == 4
+                || model->triangle_meshes[0]->poly[i].parentIndex == 9)*/
+                if(0)
+                    {
+                        exit(4);
+                    }
+            }
         }
 #ifdef DEBUGLEAKPOS
         for (size_t leakIndex = 0; leakIndex < globalCounter->leakPositions.size(); leakIndex++) {
@@ -1489,12 +1578,11 @@ int SimulationControllerGPU::ResetSimulation(bool softReset) {
     if (!softReset && optixHandle) {
         CloseSimulation();
         //optixHandle->resetDeviceData(settings->kernelDimensions);
+        globFigures = {};
+        Load();
     }
 
-    figures.total_des = 0;
-    figures.total_abs = 0;
-    figures.total_counter = 0;
-    figures.total_absd = 0.0;
+    figures = {};
     hasEnded = false;
 
 #if defined (WITHDESORPEXIT)
@@ -1513,6 +1601,9 @@ GlobalCounter *SimulationControllerGPU::GetGlobalCounter() {
 int SimulationControllerGPU::ChangeParams(std::shared_ptr<flowgpu::MolflowGPUSettings> molflowGlobal) {
     if(!settings)
         settings = std::make_shared<flowgpu::MolflowGPUSettings>();
+    bool size_changed = molflowGlobal->kernelDimensions[0] != settings->kernelDimensions[0] || molflowGlobal->kernelDimensions[1] != settings->kernelDimensions[1];
     *settings = *molflowGlobal;
-    return 0;
+    /*if(size_changed)
+        optixHandle->resize(make_uint2(settings->kernelDimensions[0], settings->kernelDimensions[1]));
+    */return 0;
 }
