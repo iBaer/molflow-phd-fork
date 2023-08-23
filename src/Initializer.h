@@ -53,7 +53,7 @@ public:
 
     static int initFromArgv(int argc, char **argv, SimulationManager *simManager, const std::shared_ptr<MolflowSimulationModel>& model);
 
-    static int initTimeLimit(const std::shared_ptr<MolflowSimulationModel> &model, double time);
+    [[maybe_unused]] static int initTimeLimit(const std::shared_ptr<MolflowSimulationModel> &model, double time);
 
     static int
     loadFromGeneration(const std::shared_ptr<MolflowSimulationModel> &model, GlobalSimuState *globState, double ratio,

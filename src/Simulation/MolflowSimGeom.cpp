@@ -71,7 +71,7 @@ void  MolflowSimulationModel::BuildPrisma(double L, double R, double angle, doub
 
     sh.nbSuper = 1;
     structures.resize(1);
-    structures.begin()->strName = strdup("Prisma");
+    structures.begin()->strName = _strdup("Prisma");
 
     try{
         facets.resize(sh.nbFacet, nullptr);

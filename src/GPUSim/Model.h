@@ -124,6 +124,9 @@ namespace flowgpu {
         uint32_t nbTexel_total;
         uint32_t nbProfSlices_total;
 
+#if defined(USE_NORMALIZED_GEOM)
+        double maxAbsCoord = 0.0; // scaling factor for normalization
+#endif
         //! bounding box of all vertices in the model
         //float3 bounds.lower;
         //float3 bounds.upper;

@@ -160,7 +160,7 @@ int Initializer::initFromArgv(int argc, char **argv, SimulationManager *simManag
 
     initDefaultSettings();
 
-    int err = 1;
+    int err;
     if (-1 < (err = parseCommands(argc, argv))) {
         Log::console_error("Error: Initialising parsing arguments\n");
         return err;
@@ -289,7 +289,8 @@ Initializer::loadFromGeneration(const std::shared_ptr<MolflowSimulationModel> &m
     //int    step = 10;
     //1. Load Input File (regular XML)
     // Geometry
-    model->BuildPrisma(L, R, angle, 0.0, step);
+    double sticking = 0.0; // none
+    model->BuildPrisma(L, R, angle, sticking, step);
     // Settings
     // Previous results
 
@@ -461,7 +462,7 @@ int Initializer::initDesLimit(const std::shared_ptr<MolflowSimulationModel>& mod
 * \brief Initializes time limit for the simulation
  * \return 0> error code, 0 when ok
  */
-int Initializer::initTimeLimit(const std::shared_ptr<MolflowSimulationModel>& model, double time) {
+[[maybe_unused]] int Initializer::initTimeLimit(const std::shared_ptr<MolflowSimulationModel>& model, double time) {
     if (!model->m.try_lock()) {
         return 1;
     }

@@ -864,11 +864,37 @@ namespace flowgpu {
         model->ontheflyParams = simModel.otfParams;
 
         model->geomProperties = simModel.sh;
+
         vertices3d.reserve(simModel.vertices3.size());
+#if defined(USE_NORMALIZED_GEOM)
+        // Find the maximum absolute coordinate value in any dimension
+        double maxAbsCoord = 0.0f;
+        for (const auto &vert : simModel.vertices3) {
+            double absX = abs(vert.x);
+            double absY = abs(vert.y);
+            double absZ = abs(vert.z);
+
+            // Update maxAbsCoord if any absolute coordinate is greater
+            maxAbsCoord = max(maxAbsCoord, max(absX, max(absY, absZ)));
+        }
+
+        // Calculate the scaling factor to map the maximum absolute coordinate to 1
+        double scaleFactor = 1.0 / maxAbsCoord;
+
+        // Scale the coordinates and store them
+        for (const auto &vert : simModel.vertices3) {
+            float scaledX = vert.x * scaleFactor;
+            float scaledY = vert.y * scaleFactor;
+            float scaledZ = vert.z * scaleFactor;
+
+            vertices3d.emplace_back(make_float3(scaledX, scaledY, scaledZ));
+        }
+
+#else
         for (auto &vert: simModel.vertices3) {
             vertices3d.emplace_back(make_float3(vert.x, vert.y, vert.z));
         }
-
+#endif
         size_t countInd = 0;
         facets.resize(simModel.facets.size());
         int facInd = 0;
