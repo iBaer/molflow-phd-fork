@@ -740,6 +740,7 @@ namespace flowgpu {
         return 0;
     }
 
+#define USE_NORMALIZED_GEOM 1
     //! Load simulation data (geometry etc.) from Molflow's serialization output
     flowgpu::Model *loadFromSerialization(const std::string &inputString) {
         std::stringstream inputStream;
