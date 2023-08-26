@@ -288,7 +288,6 @@ Initializer::loadFromGeneration(const std::shared_ptr<MolflowSimulationModel> &m
     //1. Load Input File (regular XML)
     // Geometry
     model->BuildPrisma(L, R, angle, 0.0, step);
-    model->otfParams.formula_ptr->AddFormula("Trans.prob.", "A2/SUMDES");
 
     // Settings
     // Previous results

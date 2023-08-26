@@ -401,5 +401,9 @@ int main(int argc, char** argv) {
     // Cleanup
     SettingsIO::cleanup_files();
 
+    if(SettingsIO::autogenerateTest > 0.0) {
+        Log::console_msg_master(3,"Trans. Prob: {}\n", globState.facetStates.at(1).momentResults.at(0).hits.nbAbsEquiv / globState.globalHits.globalHits.nbDesorbed);
+    }
+
     return 0;
 }
