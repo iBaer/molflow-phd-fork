@@ -53,7 +53,7 @@ void initDefaultSettings() {
     SettingsIO::outputFacetDetails = false;
     SettingsIO::outputFacetQuantities = false;
     SettingsIO::overwrite = false;
-    SettingsIO::autogenerateTest = false;
+    SettingsIO::autogenerateTest = 0.0;
 
     SettingsIO::workFile.clear();
     SettingsIO::inputFile.clear();
@@ -95,7 +95,7 @@ int Initializer::parseCommands(int argc, char **argv) {
     auto group = app.add_option_group("subgroup");
     group->add_option("-f,--file", SettingsIO::inputFile, "Required input file (XML/ZIP only)")
             ->check(CLI::ExistingFile);
-    group->add_flag("--auto", SettingsIO::autogenerateTest, "Use auto generated test case");
+    group->add_option("--auto", SettingsIO::autogenerateTest, "Use auto generated test case");
     group->require_option(1);
 
     CLI::Option *optOfile = app.add_option("-o,--output", SettingsIO::outputFile,
@@ -288,6 +288,8 @@ Initializer::loadFromGeneration(const std::shared_ptr<MolflowSimulationModel> &m
     //1. Load Input File (regular XML)
     // Geometry
     model->BuildPrisma(L, R, angle, 0.0, step);
+    model->otfParams.formula_ptr->AddFormula("Trans.prob.", "A2/SUMDES");
+
     // Settings
     // Previous results
 
