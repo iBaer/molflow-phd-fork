@@ -678,7 +678,7 @@ int main(int argc, char** argv) {
 #endif
 
 
-    if(SettingsIO::autogenerateTest <= 0.0 && InitializerGPU::initFromFile(&simManager, model, &globState, gpu_model)){
+    if(SettingsIO::autogenerateTest < 0.0 && InitializerGPU::initFromFile(&simManager, model, &globState, gpu_model)){
         Log::console_error("Error: Loading test case\n");
 #if defined(USE_MPI)
         MPI_Finalize();

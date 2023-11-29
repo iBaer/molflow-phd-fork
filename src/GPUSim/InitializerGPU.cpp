@@ -56,7 +56,7 @@ void initDefaultSettings() {
     SettingsIO::outputFacetDetails = false;
     SettingsIO::outputFacetQuantities = false;
     SettingsIO::overwrite = false;
-    SettingsIO::autogenerateTest = 0.0;
+    SettingsIO::autogenerateTest = -1.0;
     SettingsIO::analyzeScene = false;
 
     SettingsIO::workFile.clear();
