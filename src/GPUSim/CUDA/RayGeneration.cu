@@ -126,24 +126,21 @@ namespace flowgpu {
         float facetRnd = generate_rand(states, getWorkIndex());
 #endif
 
-        int facIndex = 0;
-        bool found = false;
-        do{
-            OOB_CHECK_INT("facIndex", facIndex, optixLaunchParams.simConstants.nbFacets);
+        int facIndex = -1;
+        int left = 0;
+        int right = optixLaunchParams.simConstants.nbFacets - 1;
 
-            found = (rayGenData->facetProbabilities[facIndex].y >= facetRnd); // find probability interval rand lies in
-            if(!found)
-                facIndex++;
-
-            /*if(found){
-                if(facIndex==0)
-                    printf("[%d] %u/%u with last prob %8.6f > facetRnd %8.6f and rand index %u+%u\n", fbIndex, facIndex, optixLaunchParams.simConstants.nbFacets,
-                           rayGenData->facetProbabilities[facIndex].y,facetRnd, randInd,randOffset-1);
-                else
-                    printf("found %u/%u with last prob %8.6f > facetRnd %8.6f \n", facIndex, optixLaunchParams.simConstants.nbFacets,
-                       rayGenData->facetProbabilities[facIndex].y,facetRnd);
-            }*/
-        }while(!found && facIndex<optixLaunchParams.simConstants.nbFacets);
+        // Binary search on outgassing probability cfd
+        while (left <= right) {
+            int mid = left + (right - left) / 2;
+            OOB_CHECK_INT("facIndex", mid, optixLaunchParams.simConstants.nbFacets);
+            if (rayGenData->facetProbabilities[mid].y >= facetRnd) {
+                facIndex = mid;
+                right = mid - 1;
+            } else {
+                left = mid + 1;
+            }
+        }
 
         OOB_CHECK_INT("Post facIndex", facIndex, optixLaunchParams.simConstants.nbFacets);
 
